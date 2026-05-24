@@ -8,6 +8,18 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/interfaces"
 )
 
+// SetSSEHeaders applies common response headers for server-sent event streams.
+func SetSSEHeaders(c *gin.Context) {
+	if c == nil {
+		return
+	}
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache, no-transform")
+	c.Header("Connection", "keep-alive")
+	c.Header("Access-Control-Allow-Origin", "*")
+	c.Header("X-Accel-Buffering", "no")
+}
+
 type StreamForwardOptions struct {
 	// KeepAliveInterval overrides the configured streaming keep-alive interval.
 	// If nil, the configured default is used. If set to <= 0, keep-alives are disabled.
@@ -27,6 +39,89 @@ type StreamForwardOptions struct {
 	// WriteKeepAlive optionally writes a keep-alive heartbeat. It should not flush.
 	// When nil, a standard SSE comment heartbeat is used.
 	WriteKeepAlive func()
+}
+
+// StreamBootstrapKeepAlive commits SSE headers and heartbeats while a streaming
+// request is waiting for the first upstream payload.
+type StreamBootstrapKeepAlive struct {
+	c              *gin.Context
+	flusher        http.Flusher
+	ticker         *time.Ticker
+	tickerC        <-chan time.Time
+	committed      bool
+	writeHeaders   func()
+	writeKeepAlive func()
+}
+
+func (h *BaseAPIHandler) NewStreamBootstrapKeepAlive(c *gin.Context, flusher http.Flusher, writeHeaders func(), writeKeepAlive func()) *StreamBootstrapKeepAlive {
+	interval := time.Duration(0)
+	if h != nil {
+		interval = StreamingKeepAliveInterval(h.Cfg)
+	}
+	return newStreamBootstrapKeepAlive(c, flusher, interval, writeHeaders, writeKeepAlive)
+}
+
+func newStreamBootstrapKeepAlive(c *gin.Context, flusher http.Flusher, interval time.Duration, writeHeaders func(), writeKeepAlive func()) *StreamBootstrapKeepAlive {
+	if writeHeaders == nil {
+		writeHeaders = func() {}
+	}
+	if writeKeepAlive == nil {
+		writeKeepAlive = func() {
+			if c != nil {
+				_, _ = c.Writer.Write([]byte(": keep-alive\n\n"))
+			}
+		}
+	}
+	b := &StreamBootstrapKeepAlive{
+		c:              c,
+		flusher:        flusher,
+		writeHeaders:   writeHeaders,
+		writeKeepAlive: writeKeepAlive,
+	}
+	if interval > 0 && c != nil && flusher != nil {
+		b.ticker = time.NewTicker(interval)
+		b.tickerC = b.ticker.C
+	}
+	return b
+}
+
+func (b *StreamBootstrapKeepAlive) C() <-chan time.Time {
+	if b == nil {
+		return nil
+	}
+	return b.tickerC
+}
+
+func (b *StreamBootstrapKeepAlive) Committed() bool {
+	return b != nil && b.committed
+}
+
+func (b *StreamBootstrapKeepAlive) Commit() {
+	if b == nil || b.committed {
+		return
+	}
+	b.writeHeaders()
+	b.committed = true
+}
+
+func (b *StreamBootstrapKeepAlive) WriteKeepAlive() {
+	if b == nil {
+		return
+	}
+	b.Commit()
+	b.writeKeepAlive()
+	if b.flusher != nil {
+		b.flusher.Flush()
+	}
+}
+
+func (b *StreamBootstrapKeepAlive) Stop() {
+	if b == nil || b.ticker == nil {
+		return
+	}
+	b.ticker.Stop()
+	b.ticker = nil
+	b.tickerC = nil
 }
 
 func (h *BaseAPIHandler) ForwardStream(c *gin.Context, flusher http.Flusher, cancel func(error), data <-chan []byte, errs <-chan *interfaces.ErrorMessage, opts StreamForwardOptions) {

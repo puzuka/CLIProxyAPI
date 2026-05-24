@@ -1111,12 +1111,12 @@ func (h *OpenAIAPIHandler) streamRoutedImages(c *gin.Context, imageReq []byte, i
 	model := strings.TrimSpace(imageModel)
 	dataChan, upstreamHeaders, errChan := h.ExecuteImageStreamWithAuthManager(cliCtx, xaiImagesHandlerType, model, imageReq, "")
 
-	setSSEHeaders := func() {
-		c.Header("Content-Type", "text/event-stream")
-		c.Header("Cache-Control", "no-cache")
-		c.Header("Connection", "keep-alive")
-		c.Header("Access-Control-Allow-Origin", "*")
+	writeHeaders := func() {
+		handlers.SetSSEHeaders(c)
+		handlers.WriteUpstreamHeaders(c.Writer.Header(), upstreamHeaders)
 	}
+	bootstrap := h.NewStreamBootstrapKeepAlive(c, flusher, writeHeaders, nil)
+	defer bootstrap.Stop()
 
 	for {
 		select {
@@ -1128,7 +1128,12 @@ func (h *OpenAIAPIHandler) streamRoutedImages(c *gin.Context, imageReq []byte, i
 				errChan = nil
 				continue
 			}
-			h.WriteErrorResponse(c, errMsg)
+			if bootstrap.Committed() {
+				writeImageStreamErrorEvent(c, errMsg)
+				flusher.Flush()
+			} else {
+				h.WriteErrorResponse(c, errMsg)
+			}
 			if errMsg != nil {
 				cliCancel(errMsg.Error)
 			} else {
@@ -1137,44 +1142,26 @@ func (h *OpenAIAPIHandler) streamRoutedImages(c *gin.Context, imageReq []byte, i
 			return
 		case chunk, ok := <-dataChan:
 			if !ok {
-				setSSEHeaders()
-				handlers.WriteUpstreamHeaders(c.Writer.Header(), upstreamHeaders)
+				bootstrap.Commit()
 				_, _ = c.Writer.Write([]byte("\n"))
 				flusher.Flush()
 				cliCancel(nil)
 				return
 			}
 
-			setSSEHeaders()
-			handlers.WriteUpstreamHeaders(c.Writer.Header(), upstreamHeaders)
+			bootstrap.Commit()
 			_, _ = c.Writer.Write(chunk)
 			flusher.Flush()
+			bootstrap.Stop()
 			h.forwardRawImageStream(cliCtx, c, func(err error) { cliCancel(err) }, dataChan, errChan)
 			return
+		case <-bootstrap.C():
+			bootstrap.WriteKeepAlive()
 		}
 	}
 }
 
 func (h *OpenAIAPIHandler) forwardRawImageStream(ctx context.Context, c *gin.Context, cancel func(error), data <-chan []byte, errs <-chan *interfaces.ErrorMessage) {
-	emitError := func(errMsg *interfaces.ErrorMessage) {
-		if errMsg == nil {
-			return
-		}
-		status := http.StatusInternalServerError
-		if errMsg.StatusCode > 0 {
-			status = errMsg.StatusCode
-		}
-		errText := http.StatusText(status)
-		if errMsg.Error != nil && strings.TrimSpace(errMsg.Error.Error()) != "" {
-			errText = errMsg.Error.Error()
-		}
-		body := handlers.BuildErrorResponseBody(status, errText)
-		_, _ = fmt.Fprintf(c.Writer, "event: error\ndata: %s\n\n", string(body))
-		if flusher, ok := c.Writer.(http.Flusher); ok {
-			flusher.Flush()
-		}
-	}
-
 	for {
 		select {
 		case <-c.Request.Context().Done():
@@ -1185,7 +1172,10 @@ func (h *OpenAIAPIHandler) forwardRawImageStream(ctx context.Context, c *gin.Con
 			return
 		case errMsg, ok := <-errs:
 			if ok && errMsg != nil {
-				emitError(errMsg)
+				writeImageStreamErrorEvent(c, errMsg)
+				if flusher, ok := c.Writer.(http.Flusher); ok {
+					flusher.Flush()
+				}
 				cancel(errMsg.Error)
 				return
 			}
@@ -1201,6 +1191,22 @@ func (h *OpenAIAPIHandler) forwardRawImageStream(ctx context.Context, c *gin.Con
 			}
 		}
 	}
+}
+
+func writeImageStreamErrorEvent(c *gin.Context, errMsg *interfaces.ErrorMessage) {
+	if errMsg == nil {
+		return
+	}
+	status := http.StatusInternalServerError
+	if errMsg.StatusCode > 0 {
+		status = errMsg.StatusCode
+	}
+	errText := http.StatusText(status)
+	if errMsg.Error != nil && strings.TrimSpace(errMsg.Error.Error()) != "" {
+		errText = errMsg.Error.Error()
+	}
+	body := handlers.BuildErrorResponseBody(status, errText)
+	_, _ = fmt.Fprintf(c.Writer, "event: error\ndata: %s\n\n", string(body))
 }
 
 func (h *OpenAIAPIHandler) streamOpenAICompatImages(c *gin.Context, compatReq []byte, imageModel string) {
@@ -1219,12 +1225,12 @@ func (h *OpenAIAPIHandler) streamOpenAICompatImages(c *gin.Context, compatReq []
 	model := strings.TrimSpace(imageModel)
 	dataChan, upstreamHeaders, errChan := h.ExecuteStreamWithAuthManager(cliCtx, xaiImagesHandlerType, model, compatReq, "")
 
-	setSSEHeaders := func() {
-		c.Header("Content-Type", "text/event-stream")
-		c.Header("Cache-Control", "no-cache")
-		c.Header("Connection", "keep-alive")
-		c.Header("Access-Control-Allow-Origin", "*")
+	writeHeaders := func() {
+		handlers.SetSSEHeaders(c)
+		handlers.WriteUpstreamHeaders(c.Writer.Header(), upstreamHeaders)
 	}
+	bootstrap := h.NewStreamBootstrapKeepAlive(c, flusher, writeHeaders, nil)
+	defer bootstrap.Stop()
 
 	for {
 		select {
@@ -1236,7 +1242,12 @@ func (h *OpenAIAPIHandler) streamOpenAICompatImages(c *gin.Context, compatReq []
 				errChan = nil
 				continue
 			}
-			h.WriteErrorResponse(c, errMsg)
+			if bootstrap.Committed() {
+				writeImageStreamErrorEvent(c, errMsg)
+				flusher.Flush()
+			} else {
+				h.WriteErrorResponse(c, errMsg)
+			}
 			if errMsg != nil {
 				cliCancel(errMsg.Error)
 			} else {
@@ -1245,38 +1256,27 @@ func (h *OpenAIAPIHandler) streamOpenAICompatImages(c *gin.Context, compatReq []
 			return
 		case chunk, ok := <-dataChan:
 			if !ok {
-				setSSEHeaders()
-				handlers.WriteUpstreamHeaders(c.Writer.Header(), upstreamHeaders)
+				bootstrap.Commit()
 				flusher.Flush()
 				cliCancel(nil)
 				return
 			}
 
-			setSSEHeaders()
-			handlers.WriteUpstreamHeaders(c.Writer.Header(), upstreamHeaders)
+			bootstrap.Commit()
 			_, _ = c.Writer.Write(chunk)
 			flusher.Flush()
+			bootstrap.Stop()
 			h.ForwardStream(c, flusher, func(err error) { cliCancel(err) }, dataChan, errChan, handlers.StreamForwardOptions{
 				WriteChunk: func(next []byte) {
 					_, _ = c.Writer.Write(next)
 				},
 				WriteTerminalError: func(errMsg *interfaces.ErrorMessage) {
-					if errMsg == nil {
-						return
-					}
-					status := http.StatusInternalServerError
-					if errMsg.StatusCode > 0 {
-						status = errMsg.StatusCode
-					}
-					errText := http.StatusText(status)
-					if errMsg.Error != nil && errMsg.Error.Error() != "" {
-						errText = errMsg.Error.Error()
-					}
-					body := handlers.BuildErrorResponseBody(status, errText)
-					_, _ = fmt.Fprintf(c.Writer, "event: error\ndata: %s\n\n", string(body))
+					writeImageStreamErrorEvent(c, errMsg)
 				},
 			})
 			return
+		case <-bootstrap.C():
+			bootstrap.WriteKeepAlive()
 		}
 	}
 }
@@ -1356,10 +1356,7 @@ func (h *OpenAIAPIHandler) streamImagesWithModel(c *gin.Context, imageReq []byte
 		return
 	}
 
-	c.Header("Content-Type", "text/event-stream")
-	c.Header("Cache-Control", "no-cache")
-	c.Header("Connection", "keep-alive")
-	c.Header("Access-Control-Allow-Origin", "*")
+	handlers.SetSSEHeaders(c)
 	handlers.WriteUpstreamHeaders(c.Writer.Header(), upstreamHeaders)
 
 	eventName := streamPrefix + ".completed"
@@ -1595,12 +1592,12 @@ func (h *OpenAIAPIHandler) streamImagesFromResponses(c *gin.Context, responsesRe
 	}
 	dataChan, upstreamHeaders, errChan := h.ExecuteStreamWithAuthManager(cliCtx, "openai-response", mainModel, responsesReq, "")
 
-	setSSEHeaders := func() {
-		c.Header("Content-Type", "text/event-stream")
-		c.Header("Cache-Control", "no-cache")
-		c.Header("Connection", "keep-alive")
-		c.Header("Access-Control-Allow-Origin", "*")
+	writeHeaders := func() {
+		handlers.SetSSEHeaders(c)
+		handlers.WriteUpstreamHeaders(c.Writer.Header(), upstreamHeaders)
 	}
+	bootstrap := h.NewStreamBootstrapKeepAlive(c, flusher, writeHeaders, nil)
+	defer bootstrap.Stop()
 
 	writeEvent := func(eventName string, dataJSON []byte) {
 		if strings.TrimSpace(eventName) != "" {
@@ -1621,7 +1618,12 @@ func (h *OpenAIAPIHandler) streamImagesFromResponses(c *gin.Context, responsesRe
 				errChan = nil
 				continue
 			}
-			h.WriteErrorResponse(c, errMsg)
+			if bootstrap.Committed() {
+				writeImageStreamErrorEvent(c, errMsg)
+				flusher.Flush()
+			} else {
+				h.WriteErrorResponse(c, errMsg)
+			}
 			if errMsg != nil {
 				cliCancel(errMsg.Error)
 			} else {
@@ -1630,19 +1632,20 @@ func (h *OpenAIAPIHandler) streamImagesFromResponses(c *gin.Context, responsesRe
 			return
 		case chunk, ok := <-dataChan:
 			if !ok {
-				setSSEHeaders()
-				handlers.WriteUpstreamHeaders(c.Writer.Header(), upstreamHeaders)
+				bootstrap.Commit()
 				_, _ = c.Writer.Write([]byte("\n"))
 				flusher.Flush()
 				cliCancel(nil)
 				return
 			}
 
-			setSSEHeaders()
-			handlers.WriteUpstreamHeaders(c.Writer.Header(), upstreamHeaders)
+			bootstrap.Commit()
+			bootstrap.Stop()
 
 			h.forwardImagesStream(cliCtx, c, flusher, func(err error) { cliCancel(err) }, dataChan, errChan, chunk, responseFormat, streamPrefix, writeEvent)
 			return
+		case <-bootstrap.C():
+			bootstrap.WriteKeepAlive()
 		}
 	}
 }

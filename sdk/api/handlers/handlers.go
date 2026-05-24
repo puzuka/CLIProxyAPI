@@ -48,7 +48,7 @@ type ErrorDetail struct {
 const idempotencyKeyMetadataKey = "idempotency_key"
 
 const (
-	defaultStreamingKeepAliveSeconds = 0
+	defaultStreamingKeepAliveSeconds = config.DefaultStreamingKeepAliveSeconds
 	defaultStreamingBootstrapRetries = 0
 )
 

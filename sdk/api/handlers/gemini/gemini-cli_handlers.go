@@ -154,10 +154,7 @@ func (h *GeminiCLIAPIHandler) handleInternalStreamGenerateContent(c *gin.Context
 	alt := h.GetAlt(c)
 
 	if alt == "" {
-		c.Header("Content-Type", "text/event-stream")
-		c.Header("Cache-Control", "no-cache")
-		c.Header("Connection", "keep-alive")
-		c.Header("Access-Control-Allow-Origin", "*")
+		handlers.SetSSEHeaders(c)
 	}
 
 	// Get the http.Flusher interface to manually flush the response.

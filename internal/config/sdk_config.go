@@ -4,6 +4,8 @@
 // debug settings, proxy configuration, and API keys.
 package config
 
+const DefaultStreamingKeepAliveSeconds = 15
+
 // SDKConfig represents the application's configuration, loaded from a YAML file.
 type SDKConfig struct {
 	// ProxyURL is the URL of an optional proxy server to use for outbound requests.
@@ -49,7 +51,7 @@ type SDKConfig struct {
 // StreamingConfig holds server streaming behavior configuration.
 type StreamingConfig struct {
 	// KeepAliveSeconds controls how often the server emits SSE heartbeats (": keep-alive\n\n").
-	// <= 0 disables keep-alives. Default is 0.
+	// <= 0 disables keep-alives. Default is 15.
 	KeepAliveSeconds int `yaml:"keepalive-seconds,omitempty" json:"keepalive-seconds,omitempty"`
 
 	// BootstrapRetries controls how many times the server may retry a streaming request before any bytes are sent,
