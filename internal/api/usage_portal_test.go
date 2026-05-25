@@ -4,12 +4,17 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/managementasset"
 )
 
 func TestUsagePortalServesHTML(t *testing.T) {
 	server := newTestServer(t)
+	writeTestManagementAsset(t, server, "<!doctype html><title>Usage Portal</title><main>/usage/</main>")
 
 	req := httptest.NewRequest(http.MethodGet, "/usage", nil)
 	rr := httptest.NewRecorder()
@@ -28,6 +33,7 @@ func TestUsagePortalServesHTML(t *testing.T) {
 
 func TestUsagePortalSupportsHead(t *testing.T) {
 	server := newTestServer(t)
+	writeTestManagementAsset(t, server, "<!doctype html><title>Usage Portal</title>")
 
 	req := httptest.NewRequest(http.MethodHead, "/usage", nil)
 	rr := httptest.NewRecorder()
@@ -104,4 +110,16 @@ func containsAll(value string, parts ...string) bool {
 		}
 	}
 	return true
+}
+
+func writeTestManagementAsset(t *testing.T, server *Server, body string) {
+	t.Helper()
+
+	path := managementasset.FilePath(server.configFilePath)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatalf("create management asset dir: %v", err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("write management asset: %v", err)
+	}
 }
