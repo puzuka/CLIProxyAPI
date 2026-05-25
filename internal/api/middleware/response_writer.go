@@ -12,6 +12,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/interfaces"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/logging"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/usageportal"
 )
 
 const requestBodyOverrideContextKey = "REQUEST_BODY_OVERRIDE"
@@ -280,6 +281,18 @@ func (w *ResponseWriterWrapper) Finalize(c *gin.Context) error {
 
 	hasAPIError := len(slicesAPIResponseError) > 0 || finalStatusCode >= http.StatusBadRequest
 	forceLog := w.logOnErrorOnly && hasAPIError && !w.logger.IsEnabled()
+	requestBody := w.extractRequestBody(c)
+	responseHeaders := w.cloneHeaders()
+	responseBody := w.extractResponseBody(c)
+	websocketTimeline := w.extractWebsocketTimeline(c)
+	apiRequest := w.extractAPIRequest(c)
+	apiResponse := w.extractAPIResponse(c)
+	apiWebsocketTimeline := w.extractAPIWebsocketTimeline(c)
+	apiResponseTimestamp := w.extractAPIResponseTimestamp(c)
+	if !w.firstChunkTimestamp.IsZero() {
+		apiResponseTimestamp = w.firstChunkTimestamp
+	}
+	w.recordUsageHTTPRequestDetail(requestBody, finalStatusCode, responseHeaders, responseBody, websocketTimeline, apiRequest, apiResponse, apiWebsocketTimeline, apiResponseTimestamp)
 	if !w.logger.IsEnabled() && !forceLog {
 		return nil
 	}
@@ -298,15 +311,12 @@ func (w *ResponseWriterWrapper) Finalize(c *gin.Context) error {
 		w.streamWriter.SetFirstChunkTimestamp(w.firstChunkTimestamp)
 
 		// Write API Request and Response to the streaming log before closing
-		apiRequest := w.extractAPIRequest(c)
 		if len(apiRequest) > 0 {
 			_ = w.streamWriter.WriteAPIRequest(apiRequest)
 		}
-		apiResponse := w.extractAPIResponse(c)
 		if len(apiResponse) > 0 {
 			_ = w.streamWriter.WriteAPIResponse(apiResponse)
 		}
-		apiWebsocketTimeline := w.extractAPIWebsocketTimeline(c)
 		if len(apiWebsocketTimeline) > 0 {
 			_ = w.streamWriter.WriteAPIWebsocketTimeline(apiWebsocketTimeline)
 		}
@@ -318,7 +328,40 @@ func (w *ResponseWriterWrapper) Finalize(c *gin.Context) error {
 		return nil
 	}
 
-	return w.logRequest(w.extractRequestBody(c), finalStatusCode, w.cloneHeaders(), w.extractResponseBody(c), w.extractWebsocketTimeline(c), w.extractAPIRequest(c), w.extractAPIResponse(c), w.extractAPIWebsocketTimeline(c), w.extractAPIResponseTimestamp(c), slicesAPIResponseError, forceLog)
+	return w.logRequest(requestBody, finalStatusCode, responseHeaders, responseBody, websocketTimeline, apiRequest, apiResponse, apiWebsocketTimeline, apiResponseTimestamp, slicesAPIResponseError, forceLog)
+}
+
+func (w *ResponseWriterWrapper) recordUsageHTTPRequestDetail(requestBody []byte, statusCode int, responseHeaders map[string][]string, responseBody, websocketTimeline, apiRequest, apiResponse, apiWebsocketTimeline []byte, apiResponseTimestamp time.Time) {
+	if w == nil || w.requestInfo == nil {
+		return
+	}
+	usageportal.RecordHTTPRequestDetail(usageportal.HTTPRequestDetail{
+		URL:                  w.requestInfo.URL,
+		Method:               w.requestInfo.Method,
+		RequestHeaders:       cloneStringSliceMap(w.requestInfo.Headers),
+		RequestBody:          bytes.Clone(requestBody),
+		StatusCode:           statusCode,
+		ResponseHeaders:      cloneStringSliceMap(responseHeaders),
+		ResponseBody:         bytes.Clone(responseBody),
+		WebsocketTimeline:    bytes.Clone(websocketTimeline),
+		APIRequest:           bytes.Clone(apiRequest),
+		APIResponse:          bytes.Clone(apiResponse),
+		APIWebsocketTimeline: bytes.Clone(apiWebsocketTimeline),
+		RequestID:            w.requestInfo.RequestID,
+		RequestTimestamp:     w.requestInfo.Timestamp,
+		APIResponseTimestamp: apiResponseTimestamp,
+	})
+}
+
+func cloneStringSliceMap(src map[string][]string) map[string][]string {
+	if len(src) == 0 {
+		return nil
+	}
+	dst := make(map[string][]string, len(src))
+	for key, values := range src {
+		dst[key] = append([]string(nil), values...)
+	}
+	return dst
 }
 
 func (w *ResponseWriterWrapper) cloneHeaders() map[string][]string {

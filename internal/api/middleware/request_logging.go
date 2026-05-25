@@ -51,6 +51,9 @@ func RequestLoggingMiddleware(logger logging.RequestLogger) gin.HandlerFunc {
 			c.Next()
 			return
 		}
+		if len(requestInfo.Body) > 0 {
+			c.Set(requestBodyOverrideContextKey, bytes.Clone(requestInfo.Body))
+		}
 
 		// Create response writer wrapper
 		wrapper := NewResponseWriterWrapper(c.Writer, logger, requestInfo)

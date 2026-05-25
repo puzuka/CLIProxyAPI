@@ -116,6 +116,14 @@ func TestManagementUsageRequiresManagementAuthAndPopsArray(t *testing.T) {
 		t.Fatalf("legacy usage status = %d, want %d body=%s", legacyRR.Code, http.StatusNotFound, legacyRR.Body.String())
 	}
 
+	analyticsPageReq := httptest.NewRequest(http.MethodGet, "/v0/management/usage-analytics", nil)
+	analyticsPageReq.Header.Set("Authorization", "Bearer test-management-key")
+	analyticsPageRR := httptest.NewRecorder()
+	server.engine.ServeHTTP(analyticsPageRR, analyticsPageReq)
+	if analyticsPageRR.Code != http.StatusNotFound {
+		t.Fatalf("standalone analytics page status = %d, want %d body=%s", analyticsPageRR.Code, http.StatusNotFound, analyticsPageRR.Body.String())
+	}
+
 	authReq := httptest.NewRequest(http.MethodGet, "/v0/management/usage-queue?count=2", nil)
 	authReq.Header.Set("Authorization", "Bearer test-management-key")
 	authRR := httptest.NewRecorder()
@@ -172,6 +180,166 @@ func TestHomeEnabledHidesManagementEndpointsAndControlPanel(t *testing.T) {
 			t.Fatalf("status = %d, want %d body=%s", rr.Code, http.StatusNotFound, rr.Body.String())
 		}
 	})
+
+	t.Run("usage analytics extension returns 404", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/usage-analytics-extension.js", nil)
+		rr := httptest.NewRecorder()
+		server.engine.ServeHTTP(rr, req)
+		if rr.Code != http.StatusNotFound {
+			t.Fatalf("status = %d, want %d body=%s", rr.Code, http.StatusNotFound, rr.Body.String())
+		}
+	})
+
+	t.Run("usage analytics page returns 404", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/usage-analytics.html", nil)
+		rr := httptest.NewRecorder()
+		server.engine.ServeHTTP(rr, req)
+		if rr.Code != http.StatusNotFound {
+			t.Fatalf("status = %d, want %d body=%s", rr.Code, http.StatusNotFound, rr.Body.String())
+		}
+	})
+}
+
+func TestManagementControlPanelServesLocalOverride(t *testing.T) {
+	tmpDir := t.TempDir()
+	managementHTMLPath := filepath.Join(tmpDir, "management.html")
+	if err := os.WriteFile(managementHTMLPath, []byte("<!doctype html><html><body><main>panel</main></body></html>"), 0o600); err != nil {
+		t.Fatalf("write management html: %v", err)
+	}
+	t.Setenv("MANAGEMENT_STATIC_PATH", managementHTMLPath)
+
+	server := newTestServer(t)
+	req := httptest.NewRequest(http.MethodGet, "/management.html", nil)
+	rr := httptest.NewRecorder()
+	server.engine.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d body=%s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "<main>panel</main>") {
+		t.Fatalf("management html missing original body: %s", body)
+	}
+	if !strings.Contains(body, "/usage-analytics-extension.js") {
+		t.Fatalf("management html missing injected extension script: %s", body)
+	}
+}
+
+func TestManagementControlPanelServesBundledUsageAnalyticsExtension(t *testing.T) {
+	server := newTestServer(t)
+	req := httptest.NewRequest(http.MethodGet, "/management.html", nil)
+	rr := httptest.NewRecorder()
+	server.engine.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d body=%s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "/usage-analytics-extension.js") {
+		t.Fatalf("bundled management html missing usage analytics extension script")
+	}
+	if strings.Contains(body, "usage_analytics.title") {
+		t.Fatalf("bundled management html still contains React usage analytics route copy")
+	}
+}
+
+func TestManagementControlPanelServesUsageAnalyticsExtensionScript(t *testing.T) {
+	server := newTestServer(t)
+	req := httptest.NewRequest(http.MethodGet, "/usage-analytics-extension.js", nil)
+	rr := httptest.NewRecorder()
+	server.engine.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d body=%s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+	if contentType := rr.Header().Get("Content-Type"); !strings.Contains(contentType, "application/javascript") {
+		t.Fatalf("content type = %q, want application/javascript", contentType)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, "/usage-analytics/stream") {
+		t.Fatalf("extension script missing realtime stream client")
+	}
+	if !strings.Contains(body, "attachShadow") {
+		t.Fatalf("extension script should mount independently with Shadow DOM")
+	}
+	if !strings.Contains(body, "data-cpa-usage-nav") || !strings.Contains(body, "/usage-analytics.html") {
+		t.Fatalf("extension script missing Management Center sidebar link injection")
+	}
+	if !strings.Contains(body, "template.cloneNode(true)") || !strings.Contains(body, "updateUsageSidebarIcon") || !strings.Contains(body, `[data-cpa-usage-nav="true"] svg`) {
+		t.Fatalf("extension script should preserve Management Center sidebar icon wrapper styles")
+	}
+	if !strings.Contains(body, "linear-gradient") || !strings.Contains(body, "cpa-usage-icon") {
+		t.Fatalf("extension script should provide a gradient fallback sidebar icon")
+	}
+	if !strings.Contains(body, ".app-shell") || !strings.Contains(body, ".content > main.main-content") {
+		t.Fatalf("extension script should mount page mode inside the Management Center shell")
+	}
+	if !strings.Contains(body, "history.pushState") || !strings.Contains(body, "openUsagePage") {
+		t.Fatalf("extension script should open page mode without a full page reload")
+	}
+	if !strings.Contains(body, "isAbortLikeError") || !strings.Contains(body, "BodyStreamBuffer was aborted") {
+		t.Fatalf("extension script should suppress abort-like stream errors")
+	}
+	if !strings.Contains(body, "state.controller !== controller") {
+		t.Fatalf("extension script should ignore stale stream controller results")
+	}
+	if !strings.Contains(body, "chart-grid-line") || !strings.Contains(body, "Time bucket") {
+		t.Fatalf("extension script should render chart grid and axis labels")
+	}
+	if !strings.Contains(body, "chart-line-svg") || !strings.Contains(body, "data-chart-metric") {
+		t.Fatalf("extension script should render a token/cost line chart")
+	}
+	if !strings.Contains(body, "data-tooltip") || !strings.Contains(body, ".chart-point:hover::after") {
+		t.Fatalf("extension script should render instant custom chart point tooltips")
+	}
+	if strings.Contains(body, `<span class="chart-point" title=`) {
+		t.Fatalf("extension script should not use delayed native chart point title tooltips")
+	}
+	if strings.Contains(body, "legend-dot request") || strings.Contains(body, "chart-bar request") {
+		t.Fatalf("extension script should not render request data in the usage chart")
+	}
+	if !strings.Contains(body, "recent-table") || !strings.Contains(body, "requests.slice(0, 20)") {
+		t.Fatalf("extension script should render recent requests as a max-20 table")
+	}
+	if strings.Contains(body, "recent-row") {
+		t.Fatalf("extension script should not render recent requests as cards")
+	}
+	if !strings.Contains(body, "detail-stats") || !strings.Contains(body, "payload.totals") || !strings.Contains(body, "stat('Total Tokens'") {
+		t.Fatalf("extension script should render overview and detail token summary blocks")
+	}
+	if !strings.Contains(body, "By API Key") || !strings.Contains(body, "api_key_label") || !strings.Contains(body, "api_key: state.filters.apiKey") {
+		t.Fatalf("extension script should expose API key tracking and filtering")
+	}
+	if strings.Contains(body, "usage-shell") || strings.Contains(body, "min-height:100vh") {
+		t.Fatalf("extension script should not render a standalone fullscreen analytics shell")
+	}
+}
+
+func TestManagementControlPanelServesUsageAnalyticsPage(t *testing.T) {
+	server := newTestServer(t)
+	req := httptest.NewRequest(http.MethodGet, "/usage-analytics.html", nil)
+	rr := httptest.NewRecorder()
+	server.engine.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d body=%s", rr.Code, http.StatusOK, rr.Body.String())
+	}
+	if contentType := rr.Header().Get("Content-Type"); !strings.Contains(contentType, "text/html") {
+		t.Fatalf("content type = %q, want text/html", contentType)
+	}
+	body := rr.Body.String()
+	if !strings.Contains(body, `<div id="root"></div>`) {
+		t.Fatalf("usage analytics page missing Management Center shell root")
+	}
+	if !strings.Contains(body, `__CPA_USAGE_ANALYTICS_MODE__='page'`) {
+		t.Fatalf("usage analytics page missing page-mode marker")
+	}
+	if !strings.Contains(body, "/usage-analytics-extension.js") {
+		t.Fatalf("usage analytics page missing extension script")
+	}
+	if strings.Contains(body, `usage-shell`) {
+		t.Fatalf("usage analytics page should not serve standalone analytics shell")
+	}
 }
 
 func TestAmpProviderModelRoutes(t *testing.T) {

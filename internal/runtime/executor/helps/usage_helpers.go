@@ -5,16 +5,26 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	internallogging "github.com/router-for-me/CLIProxyAPI/v7/internal/logging"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/usageportal"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/util"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/usage"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
+)
+
+const (
+	requestBodyOverrideKey       = "REQUEST_BODY_OVERRIDE"
+	responseBodyOverrideKey      = "RESPONSE_BODY_OVERRIDE"
+	websocketTimelineOverrideKey = "WEBSOCKET_TIMELINE_OVERRIDE"
+	apiResponseTimestampKey      = "API_RESPONSE_TIMESTAMP"
 )
 
 type UsageReporter struct {
@@ -28,6 +38,7 @@ type UsageReporter struct {
 	source      string
 	reasoning   string
 	requestedAt time.Time
+	activeID    string
 	once        sync.Once
 }
 
@@ -51,6 +62,7 @@ func NewUsageReporter(ctx context.Context, provider, model string, auth *cliprox
 		reporter.authID = auth.ID
 		reporter.authIndex = auth.EnsureIndex()
 	}
+	reporter.activeID = usageportal.TrackActiveStart(ctx, reporter.buildRecord(usage.Detail{}, false))
 	return reporter
 }
 
@@ -100,6 +112,7 @@ func (r *UsageReporter) publishWithOutcome(ctx context.Context, detail usage.Det
 	}
 	detail = normalizeUsageDetailTotal(detail)
 	r.once.Do(func() {
+		defer r.finishActive()
 		r.publishRecord(ctx, r.buildRecord(detail, failed, fail))
 	})
 }
@@ -133,13 +146,144 @@ func (r *UsageReporter) EnsurePublished(ctx context.Context) {
 		return
 	}
 	r.once.Do(func() {
+		defer r.finishActive()
 		r.publishRecord(ctx, r.buildRecord(usage.Detail{}, false, usage.Failure{}))
 	})
 }
 
 func (r *UsageReporter) publishRecord(ctx context.Context, record usage.Record) {
 	record.ResponseHeaders = internallogging.GetResponseHeaders(ctx)
+	if detail := usageHTTPRequestDetailFromContext(ctx); usageHTTPRequestDetailHasCapturedData(detail) {
+		ctx = usageportal.WithHTTPRequestDetail(ctx, detail)
+	}
 	usage.PublishRecord(ctx, record)
+}
+
+func usageHTTPRequestDetailFromContext(ctx context.Context) usageportal.HTTPRequestDetail {
+	ginCtx := ginContextFromUsageContext(ctx)
+	if ginCtx == nil {
+		return usageportal.HTTPRequestDetail{}
+	}
+	detail := usageportal.HTTPRequestDetail{
+		RequestBody:          contextBodyBytes(ginCtx, requestBodyOverrideKey),
+		ResponseBody:         contextBodyBytes(ginCtx, responseBodyOverrideKey),
+		WebsocketTimeline:    contextBodyBytes(ginCtx, websocketTimelineOverrideKey),
+		APIRequest:           contextBodyBytes(ginCtx, apiRequestKey),
+		APIResponse:          contextBodyBytes(ginCtx, apiResponseKey),
+		APIWebsocketTimeline: contextBodyBytes(ginCtx, apiWebsocketTimelineKey),
+		RequestID:            firstNonEmptyUsageString(internallogging.GetRequestID(ctx), internallogging.GetGinRequestID(ginCtx)),
+		APIResponseTimestamp: contextTime(ginCtx, apiResponseTimestampKey),
+	}
+	if ginCtx.Request != nil {
+		detail.URL = requestURLForUsageDetail(ginCtx.Request)
+		detail.Method = strings.TrimSpace(ginCtx.Request.Method)
+		detail.RequestHeaders = cloneHTTPHeaderMap(ginCtx.Request.Header)
+	}
+	if ginCtx.Writer != nil {
+		detail.StatusCode = ginCtx.Writer.Status()
+		detail.ResponseHeaders = cloneHTTPHeaderMap(ginCtx.Writer.Header())
+	}
+	return detail
+}
+
+func ginContextFromUsageContext(ctx context.Context) *gin.Context {
+	if ctx == nil {
+		return nil
+	}
+	ginCtx, _ := ctx.Value("gin").(*gin.Context)
+	return ginCtx
+}
+
+func requestURLForUsageDetail(req *http.Request) string {
+	if req == nil || req.URL == nil {
+		return ""
+	}
+	url := req.URL.Path
+	if raw := util.MaskSensitiveQuery(req.URL.RawQuery); raw != "" {
+		url += "?" + raw
+	}
+	return url
+}
+
+func contextBodyBytes(ginCtx *gin.Context, key string) []byte {
+	if ginCtx == nil {
+		return nil
+	}
+	value, exists := ginCtx.Get(key)
+	if !exists {
+		return nil
+	}
+	switch typed := value.(type) {
+	case []byte:
+		if len(typed) == 0 {
+			return nil
+		}
+		return bytes.Clone(typed)
+	case string:
+		if strings.TrimSpace(typed) == "" {
+			return nil
+		}
+		return []byte(typed)
+	default:
+		return nil
+	}
+}
+
+func contextTime(ginCtx *gin.Context, key string) time.Time {
+	if ginCtx == nil {
+		return time.Time{}
+	}
+	value, exists := ginCtx.Get(key)
+	if !exists {
+		return time.Time{}
+	}
+	if ts, ok := value.(time.Time); ok {
+		return ts
+	}
+	return time.Time{}
+}
+
+func cloneHTTPHeaderMap(headers http.Header) map[string][]string {
+	if len(headers) == 0 {
+		return nil
+	}
+	cloned := make(map[string][]string, len(headers))
+	for key, values := range headers {
+		cloned[key] = append([]string(nil), values...)
+	}
+	return cloned
+}
+
+func firstNonEmptyUsageString(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func usageHTTPRequestDetailHasCapturedData(detail usageportal.HTTPRequestDetail) bool {
+	return strings.TrimSpace(detail.URL) != "" ||
+		strings.TrimSpace(detail.Method) != "" ||
+		len(detail.RequestHeaders) > 0 ||
+		len(detail.RequestBody) > 0 ||
+		detail.StatusCode > 0 ||
+		len(detail.ResponseHeaders) > 0 ||
+		len(detail.ResponseBody) > 0 ||
+		len(detail.WebsocketTimeline) > 0 ||
+		len(detail.APIRequest) > 0 ||
+		len(detail.APIResponse) > 0 ||
+		len(detail.APIWebsocketTimeline) > 0 ||
+		strings.TrimSpace(detail.RequestID) != ""
+}
+
+func (r *UsageReporter) finishActive() {
+	if r == nil || r.activeID == "" {
+		return
+	}
+	usageportal.TrackActiveFinish(r.activeID)
+	r.activeID = ""
 }
 
 func (r *UsageReporter) buildRecord(detail usage.Detail, failed bool, failures ...usage.Failure) usage.Record {

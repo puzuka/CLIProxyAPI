@@ -2,9 +2,16 @@ package helps
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/gin-gonic/gin"
+	internallogging "github.com/router-for-me/CLIProxyAPI/v7/internal/logging"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/usageportal"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/usage"
 )
 
@@ -146,6 +153,96 @@ func TestUsageReporterBuildRecordIncludesLatency(t *testing.T) {
 	}
 }
 
+func TestUsageReporterTracksActiveRequestLifecycle(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	usageportal.ResetForTesting()
+	usageportal.SetEnabled(true)
+	t.Cleanup(usageportal.ResetForTesting)
+
+	rec := httptest.NewRecorder()
+	ginCtx, _ := gin.CreateTestContext(rec)
+	ginCtx.Set("userApiKey", "sk-client-123456")
+	ctx := context.WithValue(context.Background(), "gin", ginCtx)
+
+	reporter := NewUsageReporter(ctx, "openai", "gpt-5.4", nil)
+	active := usageportal.Analytics("today", time.Now()).ActiveRequests
+	if len(active) != 1 {
+		t.Fatalf("active requests = %d, want 1", len(active))
+	}
+	if active[0].Provider != "openai" || active[0].Model != "gpt-5.4" {
+		t.Fatalf("active request = %+v, want openai/gpt-5.4", active[0])
+	}
+	if active[0].APIKeyLabel != "sk-cli...3456" {
+		t.Fatalf("active api key label = %q, want sk-cli...3456", active[0].APIKeyLabel)
+	}
+
+	reporter.Publish(ctx, usage.Detail{TotalTokens: 1})
+	var snapshot usageportal.AnalyticsSnapshot
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		snapshot = usageportal.Analytics("today", time.Now())
+		if len(snapshot.ByAPIKey) == 1 {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	active = snapshot.ActiveRequests
+	if len(active) != 0 {
+		t.Fatalf("active requests after publish = %d, want 0", len(active))
+	}
+	if len(snapshot.ByAPIKey) != 1 || snapshot.ByAPIKey[0].APIKeyLabel != "sk-cli...3456" {
+		t.Fatalf("by api key = %+v, want sk-cli...3456", snapshot.ByAPIKey)
+	}
+}
+
+func TestUsageReporterPublishesCapturedRequestDetails(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	usageportal.ResetForTesting()
+	usageportal.SetEnabled(true)
+	t.Cleanup(usageportal.ResetForTesting)
+
+	rec := httptest.NewRecorder()
+	ginCtx, _ := gin.CreateTestContext(rec)
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions?api_key=super-secret-query", nil)
+	req.Header.Set("Authorization", "Bearer super-secret-header")
+	req.Header.Set("X-Trace", "trace-ok")
+	ginCtx.Request = req
+	internallogging.SetGinRequestID(ginCtx, "req_usage_detail")
+	ginCtx.Set("userApiKey", "sk-user-123456")
+	ginCtx.Set(requestBodyOverrideKey, []byte(`{"api_key":"super-secret-body","input":"hello"}`))
+	ginCtx.Set(apiRequestKey, []byte(`{"token":"super-secret-provider","prompt":"hello"}`))
+	ginCtx.Set(apiResponseKey, []byte(`{"output":"ok"}`))
+	ginCtx.Writer.Header().Set("Content-Type", "application/json")
+
+	ctx := context.WithValue(context.Background(), "gin", ginCtx)
+	ctx = internallogging.WithRequestID(ctx, "req_usage_detail")
+	ctx = internallogging.WithEndpoint(ctx, "/v1/chat/completions")
+	reporter := NewUsageReporter(ctx, "openai", "gpt-5.4", nil)
+	reporter.Publish(ctx, usage.Detail{InputTokens: 1, OutputTokens: 2, TotalTokens: 3})
+
+	snapshot := waitForUsageDetails(t, "req_usage_detail")
+	detail := snapshot.Details[0]
+	if detail.RequestID != "req_usage_detail" {
+		t.Fatalf("request id = %q, want req_usage_detail", detail.RequestID)
+	}
+	if detail.ProviderRequest == nil || detail.ProviderResponse == nil || detail.Request == nil {
+		t.Fatalf("captured detail missing payloads: %+v", detail)
+	}
+	raw, err := json.Marshal(detail)
+	if err != nil {
+		t.Fatalf("marshal detail: %v", err)
+	}
+	text := string(raw)
+	for _, secret := range []string{"super-secret-query", "super-secret-header", "super-secret-body", "super-secret-provider"} {
+		if strings.Contains(text, secret) {
+			t.Fatalf("detail leaked %q in %s", secret, text)
+		}
+	}
+	if !strings.Contains(text, "[REDACTED]") {
+		t.Fatalf("detail missing redaction marker: %s", text)
+	}
+}
+
 func TestUsageReporterBuildRecordIncludesRequestedModelAlias(t *testing.T) {
 	ctx := usage.WithRequestedModelAlias(context.Background(), "client-gpt")
 	reporter := NewUsageReporter(ctx, "openai", "gpt-5.4", nil)
@@ -185,4 +282,23 @@ func TestUsageReporterBuildAdditionalModelRecordSkipsZeroTokens(t *testing.T) {
 	if _, ok := reporter.buildAdditionalModelRecord("gpt-image-2", usage.Detail{CachedTokens: 2}); !ok {
 		t.Fatalf("expected non-zero cached token usage to be recorded")
 	}
+}
+
+func waitForUsageDetails(t *testing.T, requestID string) usageportal.RequestDetailsSnapshot {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		snapshot := usageportal.RequestDetails(usageportal.RequestDetailsFilter{Page: 1, PageSize: 10}, time.Now())
+		for _, detail := range snapshot.Details {
+			if detail.RequestID == requestID {
+				return usageportal.RequestDetailsSnapshot{
+					Details:    []usageportal.RequestDetail{detail},
+					Pagination: snapshot.Pagination,
+				}
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("timed out waiting for usage detail %q", requestID)
+	return usageportal.RequestDetailsSnapshot{}
 }

@@ -22,7 +22,7 @@ remote-management:
   # Leave empty to disable the Management API entirely (404 for all /v0/management routes).
   secret-key: ""
 
-  # Disable the bundled management control panel asset download and HTTP route when true.
+  # Disable the bundled management control panel HTTP route when true.
   disable-control-panel: false
 
   # Disable automatic periodic background updates of the management panel from GitHub (default: false).
@@ -65,6 +65,29 @@ error-logs-max-files: 10
 
 # When false, disable in-memory usage statistics aggregation
 usage-statistics-enabled: false
+
+usage-quota-rules: [] # usage quota rules are disabled by default; uncomment and configure the example below to enable
+# Examples 01:
+# usage-quota-rules:
+# - id: daily-codex-token-cap
+#   scope-type: provider # global or provider
+#   scope-id: codex
+#   period: today
+#   metric: totalTokens
+#   limit-value: 200000
+#   enabled: true
+#   models:
+#     mode: all
+#   description: Daily Codex provider token cap
+# Examples 02:
+# usage-quota-rules:
+#   - id: "global-limit"
+#     scope-type: "global"
+#     period: "today"
+#     metric: "totalTokens"
+#     limit-value: 1000000
+#     enabled: true
+
 
 # How long (in seconds) usage queue items are retained in memory for the Management API.
 # The local Redis RESP usage output is disabled.

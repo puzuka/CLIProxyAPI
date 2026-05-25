@@ -344,7 +344,7 @@ func (s *Server) homeHeartbeatMiddleware() gin.HandlerFunc {
 		}
 		if c != nil && c.Request != nil {
 			path := c.Request.URL.Path
-			if strings.HasPrefix(path, "/v0/management/") || path == "/v0/management" || path == "/management.html" {
+			if strings.HasPrefix(path, "/v0/management/") || path == "/v0/management" || path == "/management.html" || path == "/usage-analytics.html" || path == "/usage-analytics-extension.js" {
 				c.Next()
 				return
 			}
@@ -373,6 +373,8 @@ func (s *Server) setupRoutes() {
 	s.engine.HEAD("/healthz", healthzHandler)
 
 	s.engine.GET("/management.html", s.serveManagementControlPanel)
+	s.engine.GET("/usage-analytics.html", s.serveUsageAnalyticsPage)
+	s.engine.GET("/usage-analytics-extension.js", s.serveUsageAnalyticsExtension)
 	s.registerUsagePortalRoutes()
 	openaiHandlers := openai.NewOpenAIAPIHandler(s.handlers)
 	geminiHandlers := gemini.NewGeminiAPIHandler(s.handlers)
@@ -604,6 +606,13 @@ func (s *Server) registerManagementRoutes() {
 		mgmt.DELETE("/api-keys", s.mgmt.DeleteAPIKeys)
 		mgmt.GET("/api-key-usage", s.mgmt.GetAPIKeyUsage)
 		mgmt.GET("/usage-queue", s.mgmt.GetUsageQueue)
+		mgmt.GET("/usage-analytics/stats", s.mgmt.GetUsageAnalyticsStats)
+		mgmt.GET("/usage-analytics/chart", s.mgmt.GetUsageAnalyticsChart)
+		mgmt.GET("/usage-analytics/stream", s.mgmt.StreamUsageAnalytics)
+		mgmt.GET("/usage-analytics/request-details", s.mgmt.GetUsageAnalyticsRequestDetails)
+		mgmt.GET("/usage-analytics/providers", s.mgmt.GetUsageAnalyticsProviders)
+		mgmt.GET("/usage-analytics/providers-breakdown", s.mgmt.GetUsageAnalyticsProviderBreakdown)
+		mgmt.GET("/usage-analytics/api-keys/:id", s.mgmt.GetUsageAnalyticsAPIKey)
 
 		mgmt.GET("/gemini-api-key", s.mgmt.GetGeminiKeys)
 		mgmt.PUT("/gemini-api-key", s.mgmt.PutGeminiKeys)
@@ -736,28 +745,46 @@ func (s *Server) serveManagementControlPanel(c *gin.Context) {
 		c.AbortWithStatus(http.StatusNotFound)
 		return
 	}
-	filePath := managementasset.FilePath(s.configFilePath)
-	if strings.TrimSpace(filePath) == "" {
-		c.AbortWithStatus(http.StatusNotFound)
+	content, err := managementasset.ReadManagementHTML()
+	if err != nil {
+		log.WithError(err).Error("failed to read local management control panel asset")
+		c.AbortWithStatus(http.StatusInternalServerError)
 		return
 	}
 
-	if _, err := os.Stat(filePath); err != nil {
-		if os.IsNotExist(err) {
-			// Synchronously ensure management.html is available with a detached context.
-			// Control panel bootstrap should not be canceled by client disconnects.
-			if !managementasset.EnsureLatestManagementHTML(context.Background(), managementasset.StaticDir(s.configFilePath), cfg.ProxyURL, cfg.RemoteManagement.PanelGitHubRepository) {
-				c.AbortWithStatus(http.StatusNotFound)
-				return
-			}
-		} else {
-			log.WithError(err).Error("failed to stat management control panel asset")
-			c.AbortWithStatus(http.StatusInternalServerError)
-			return
-		}
+	c.Data(http.StatusOK, "text/html; charset=utf-8", content)
+}
+
+func (s *Server) serveUsageAnalyticsExtension(c *gin.Context) {
+	cfg := s.cfg
+	if cfg == nil || cfg.Home.Enabled || cfg.RemoteManagement.DisableControlPanel {
+		c.AbortWithStatus(http.StatusNotFound)
+		return
+	}
+	content, err := managementasset.ReadUsageAnalyticsExtensionJS()
+	if err != nil {
+		log.WithError(err).Error("failed to read usage analytics extension asset")
+		c.AbortWithStatus(http.StatusInternalServerError)
+		return
 	}
 
-	c.File(filePath)
+	c.Data(http.StatusOK, "application/javascript; charset=utf-8", content)
+}
+
+func (s *Server) serveUsageAnalyticsPage(c *gin.Context) {
+	cfg := s.cfg
+	if cfg == nil || cfg.Home.Enabled || cfg.RemoteManagement.DisableControlPanel {
+		c.AbortWithStatus(http.StatusNotFound)
+		return
+	}
+	content, err := managementasset.ReadUsageAnalyticsHTML()
+	if err != nil {
+		log.WithError(err).Error("failed to read usage analytics page asset")
+		c.AbortWithStatus(http.StatusInternalServerError)
+		return
+	}
+
+	c.Data(http.StatusOK, "text/html; charset=utf-8", content)
 }
 
 func (s *Server) enableKeepAlive(timeout time.Duration, onTimeout func()) {

@@ -46,8 +46,10 @@ GEMINI.md
 .bmad/*
 _bmad/*
 _bmad-output/*
-
 # macOS
 .DS_Store
 ._*
 .gocache/
+
+# mcp
+.playwright-mcp/
