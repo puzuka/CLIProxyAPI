@@ -6,10 +6,54 @@ import (
 	"fmt"
 	"os/exec"
 	"runtime"
+	"sync"
 
 	log "github.com/sirupsen/logrus"
 	"github.com/skratchdot/open-golang/open"
 )
+
+// incognito mode bookkeeping. The current implementation does not yet open a separate
+// incognito window — these stubs exist so callers (e.g. Kiro OAuth flow) can express
+// the preference without requiring a different OS command. If true, the caller may want
+// to instruct the user to open the URL manually in a private window.
+var (
+	browserMutex       sync.Mutex
+	incognitoMode      bool
+	lastBrowserProcess *exec.Cmd
+)
+
+// SetIncognitoMode enables or disables incognito/private browsing preference for
+// subsequent OAuth flows. The current implementation only records the flag — the
+// actual browser invocation still uses the system default. This may be extended in
+// the future to launch the browser with --incognito flags where supported.
+func SetIncognitoMode(enabled bool) {
+	browserMutex.Lock()
+	defer browserMutex.Unlock()
+	incognitoMode = enabled
+}
+
+// IsIncognitoMode returns whether incognito mode preference is set.
+func IsIncognitoMode() bool {
+	browserMutex.Lock()
+	defer browserMutex.Unlock()
+	return incognitoMode
+}
+
+// CloseBrowser attempts to terminate the last spawned browser process. When no process
+// has been launched (or the browser was opened via the system handler that did not
+// return a *exec.Cmd), this is a no-op and returns nil.
+func CloseBrowser() error {
+	browserMutex.Lock()
+	defer browserMutex.Unlock()
+
+	if lastBrowserProcess == nil || lastBrowserProcess.Process == nil {
+		return nil
+	}
+
+	err := lastBrowserProcess.Process.Kill()
+	lastBrowserProcess = nil
+	return err
+}
 
 // OpenURL opens the specified URL in the default web browser.
 // It first attempts to use a platform-agnostic library and falls back to

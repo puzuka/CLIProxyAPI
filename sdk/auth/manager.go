@@ -74,3 +74,23 @@ func (m *Manager) Login(ctx context.Context, provider string, cfg *config.Config
 	}
 	return record, savedPath, nil
 }
+
+// SaveAuth persists an externally produced auth record using the configured store.
+// This is useful for flows that obtain credentials outside of an authenticator (for
+// example: refreshing tokens loaded from a Kiro IDE cache file, or when a custom
+// device/social-OAuth flow constructs the record directly). When cfg is non-nil and
+// the store implements SetBaseDir, AuthDir is applied before saving.
+func (m *Manager) SaveAuth(record *coreauth.Auth, cfg *config.Config) (string, error) {
+	if m.store == nil {
+		return "", fmt.Errorf("cliproxy auth: no token store configured")
+	}
+	if record == nil {
+		return "", fmt.Errorf("cliproxy auth: cannot save nil auth record")
+	}
+	if cfg != nil {
+		if dirSetter, ok := m.store.(interface{ SetBaseDir(string) }); ok {
+			dirSetter.SetBaseDir(cfg.AuthDir)
+		}
+	}
+	return m.store.Save(context.Background(), record)
+}
