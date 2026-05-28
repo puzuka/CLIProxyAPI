@@ -18,43 +18,104 @@ import (
 // the upstream does not return one. Mirrors the CLI flow.
 const kiroDevicePollInterval = 5 * time.Second
 
-// RequestKiroToken kicks off an AWS Builder ID device-code OAuth flow for the Kiro
-// (Amazon Q Developer / CodeWhisperer) provider and returns the verification URL
-// plus the user code immediately so the management UI can render them.
+// kiroDefaultRegion is the fallback AWS region used when the caller does not
+// supply one. AWS Builder ID is hosted in us-east-1 only; IAM Identity Center
+// instances normally live in a region the operator must already know.
+const kiroDefaultRegion = "us-east-1"
+
+// kiroAuthMethodBuilderID is the AWS Builder ID device-code flow. This is the
+// default and only requires a freshly registered OIDC client.
+const kiroAuthMethodBuilderID = "builder-id"
+
+// kiroAuthMethodIDC is the AWS IAM Identity Center (Enterprise SSO) flow. It
+// additionally needs a Start URL plus the home region of the IDC instance.
+const kiroAuthMethodIDC = "idc"
+
+// RequestKiroToken kicks off a Kiro (Amazon Q Developer / CodeWhisperer) OAuth
+// device-code flow over HTTP and returns the verification URL plus user code
+// immediately so the management UI can render them. A background goroutine
+// polls SSO OIDC CreateToken until the user completes the browser challenge,
+// then persists the resulting credentials as a coreauth.Auth record.
 //
-// A background goroutine polls SSO OIDC CreateToken until the user completes the
-// browser challenge, then persists the resulting credentials as a coreauth.Auth
-// record. The frontend tracks completion via GetAuthStatus(state).
+// Query parameters:
+//   - method:    "builder-id" (default) for AWS Builder ID, or "idc" for AWS
+//                IAM Identity Center / Enterprise SSO. Anything else is treated
+//                as builder-id.
+//   - start_url: required when method=idc, e.g. https://my-org.awsapps.com/start.
+//   - region:    required when method=idc, e.g. us-east-1. Optional for
+//                builder-id (always us-east-1 in practice).
 //
-// This handler exposes only the Builder ID device-code path. Other Kiro flows
-// (Google OAuth via kiro:// protocol, IAM Identity Center SSO, importing an
-// existing Kiro IDE / kiro-cli cache) require either an OS-level URL handler or
-// a Start URL the user must already know — they are available via the
-// command-line subcommands (-kiro-login, -kiro-idc-login, -kiro-import).
+// The frontend tracks completion via GET /get-auth-status?state=...
+//
+// Other Kiro flows — Google OAuth via the kiro:// custom protocol, AWS
+// authorization-code flow with localhost callback, and importing an existing
+// Kiro IDE / kiro-cli local cache — still require either an OS-level URL
+// handler or inputs we cannot prompt over a JSON API, and remain CLI-only.
 func (h *Handler) RequestKiroToken(c *gin.Context) {
 	ctx := context.Background()
 	ctx = PopulateAuthContext(ctx, c)
 
-	log.Info("Initializing Kiro authentication (AWS Builder ID device-code flow)…")
+	method := strings.ToLower(strings.TrimSpace(c.Query("method")))
+	if method == "" {
+		method = kiroAuthMethodBuilderID
+	}
+
+	startURL := strings.TrimSpace(c.Query("start_url"))
+	region := strings.TrimSpace(c.Query("region"))
+	if region == "" {
+		region = kiroDefaultRegion
+	}
+
+	switch method {
+	case kiroAuthMethodBuilderID:
+		// no extra inputs required.
+	case kiroAuthMethodIDC:
+		if startURL == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "start_url is required for method=idc"})
+			return
+		}
+		if region == "" {
+			c.JSON(http.StatusBadRequest, gin.H{"error": "region is required for method=idc"})
+			return
+		}
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"error": fmt.Sprintf("unknown method %q (expected 'builder-id' or 'idc')", method)})
+		return
+	}
+
+	log.Infof("Initializing Kiro authentication (method=%s, region=%s, start_url=%q)", method, region, startURL)
 
 	state := fmt.Sprintf("kiro-%d", time.Now().UnixNano())
 	client := kiroauth.NewSSOOIDCClient(h.cfg)
 
-	// Step 1: Register a fresh OIDC client. The client_id/client_secret pair must be
-	// kept around alongside the access/refresh tokens so the watcher can refresh
-	// later without re-running the OAuth dance.
-	regResp, err := client.RegisterClient(ctx)
+	// Step 1: Register an OIDC client. For IDC we need to register against the
+	// chosen region/start URL; for Builder ID a regular RegisterClient call
+	// (always us-east-1) is enough.
+	var (
+		regResp *kiroauth.RegisterClientResponse
+		err     error
+	)
+	if method == kiroAuthMethodIDC {
+		regResp, err = client.RegisterClientWithRegion(ctx, region)
+	} else {
+		regResp, err = client.RegisterClient(ctx)
+	}
 	if err != nil {
-		log.Errorf("kiro: RegisterClient failed: %v", err)
+		log.Errorf("kiro: RegisterClient (method=%s) failed: %v", method, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to register Kiro OIDC client"})
 		return
 	}
 
-	// Step 2: Start device authorization. The verification URL we return to the
-	// caller already embeds the user_code as a query parameter (verification_uri_complete).
-	authResp, err := client.StartDeviceAuthorization(ctx, regResp.ClientID, regResp.ClientSecret)
+	// Step 2: Start device authorization. For IDC we must pass the Start URL +
+	// region so AWS issues a code scoped to the right SSO instance.
+	var authResp *kiroauth.StartDeviceAuthResponse
+	if method == kiroAuthMethodIDC {
+		authResp, err = client.StartDeviceAuthorizationWithIDC(ctx, regResp.ClientID, regResp.ClientSecret, startURL, region)
+	} else {
+		authResp, err = client.StartDeviceAuthorization(ctx, regResp.ClientID, regResp.ClientSecret)
+	}
 	if err != nil {
-		log.Errorf("kiro: StartDeviceAuthorization failed: %v", err)
+		log.Errorf("kiro: StartDeviceAuthorization (method=%s) failed: %v", method, err)
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to start Kiro device authorization"})
 		return
 	}
@@ -76,7 +137,6 @@ func (h *Handler) RequestKiroToken(c *gin.Context) {
 		}
 		expiresAt := time.Now().Add(time.Duration(authResp.ExpiresIn) * time.Second)
 		if authResp.ExpiresIn <= 0 {
-			// Fall back to a sane upper bound rather than spinning forever.
 			expiresAt = time.Now().Add(15 * time.Minute)
 		}
 
@@ -84,7 +144,15 @@ func (h *Handler) RequestKiroToken(c *gin.Context) {
 		for time.Now().Before(expiresAt) {
 			time.Sleep(interval)
 
-			resp, errToken := client.CreateToken(ctx, regResp.ClientID, regResp.ClientSecret, authResp.DeviceCode)
+			var (
+				resp     *kiroauth.CreateTokenResponse
+				errToken error
+			)
+			if method == kiroAuthMethodIDC {
+				resp, errToken = client.CreateTokenWithRegion(ctx, regResp.ClientID, regResp.ClientSecret, authResp.DeviceCode, region)
+			} else {
+				resp, errToken = client.CreateToken(ctx, regResp.ClientID, regResp.ClientSecret, authResp.DeviceCode)
+			}
 			if errToken == nil {
 				tokenResp = resp
 				break
@@ -98,19 +166,27 @@ func (h *Handler) RequestKiroToken(c *gin.Context) {
 				continue
 			}
 
-			log.Errorf("kiro: device-code token poll failed: %v", errToken)
+			log.Errorf("kiro: device-code token poll (method=%s) failed: %v", method, errToken)
 			SetOAuthSessionError(state, "Authentication failed")
 			return
 		}
 
 		if tokenResp == nil {
-			log.Warn("kiro: device-code authorization timed out before user completion")
+			log.Warnf("kiro: device-code authorization (method=%s) timed out before user completion", method)
 			SetOAuthSessionError(state, "Authorization timed out before completion")
 			return
 		}
 
-		// Best-effort enrichment — same calls used by the CLI flow.
+		// Best-effort enrichment.
 		email := kiroauth.FetchUserEmailWithFallback(ctx, h.cfg, tokenResp.AccessToken, regResp.ClientID, tokenResp.RefreshToken)
+
+		// IDC accounts have a CodeWhisperer profile ARN that the executor needs;
+		// Builder ID accounts do not. The fetcher is best-effort: when it returns
+		// empty the token still works, the watcher just cannot pre-pin a profile.
+		profileArn := ""
+		if method == kiroAuthMethodIDC {
+			profileArn = client.FetchProfileArn(ctx, tokenResp.AccessToken, regResp.ClientID, tokenResp.RefreshToken)
+		}
 
 		expiresAtRFC := time.Now().Add(time.Duration(tokenResp.ExpiresIn) * time.Second).Format(time.RFC3339)
 
@@ -118,13 +194,15 @@ func (h *Handler) RequestKiroToken(c *gin.Context) {
 			Type:         "kiro",
 			AccessToken:  tokenResp.AccessToken,
 			RefreshToken: tokenResp.RefreshToken,
+			ProfileArn:   profileArn,
 			ExpiresAt:    expiresAtRFC,
-			AuthMethod:   "builder-id",
+			AuthMethod:   method,
 			Provider:     "AWS",
 			LastRefresh:  time.Now().Format(time.RFC3339),
 			ClientID:     regResp.ClientID,
 			ClientSecret: regResp.ClientSecret,
-			Region:       "us-east-1",
+			Region:       region,
+			StartURL:     startURL,
 			Email:        email,
 		}
 
@@ -137,6 +215,12 @@ func (h *Handler) RequestKiroToken(c *gin.Context) {
 			"region":        storage.Region,
 			"timestamp":     time.Now().UnixMilli(),
 			"expired":       expiresAtRFC,
+		}
+		if startURL != "" {
+			metadata["start_url"] = startURL
+		}
+		if profileArn != "" {
+			metadata["profile_arn"] = profileArn
 		}
 		if email != "" {
 			metadata["email"] = email
@@ -159,12 +243,12 @@ func (h *Handler) RequestKiroToken(c *gin.Context) {
 
 		savedPath, errSave := h.saveTokenRecord(ctx, record)
 		if errSave != nil {
-			log.Errorf("kiro: failed to save authentication tokens: %v", errSave)
+			log.Errorf("kiro: failed to save authentication tokens (method=%s): %v", method, errSave)
 			SetOAuthSessionError(state, "Failed to save authentication tokens")
 			return
 		}
 
-		log.Infof("kiro: authentication successful, token saved to %s", savedPath)
+		log.Infof("kiro: authentication successful (method=%s), token saved to %s", method, savedPath)
 		CompleteOAuthSession(state)
 		CompleteOAuthSessionsByProvider("kiro")
 	}()
@@ -174,5 +258,6 @@ func (h *Handler) RequestKiroToken(c *gin.Context) {
 		"url":       authURL,
 		"state":     state,
 		"user_code": userCode,
+		"method":    method,
 	})
 }
