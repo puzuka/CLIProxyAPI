@@ -561,6 +561,7 @@ func convertClaudeToolsToKiro(tools gjson.Result) []KiroToolWrapper {
 			inputSchema = inputSchemaResult.Value()
 		}
 		inputSchema = ensureKiroInputSchema(inputSchema)
+		inputSchema = kirocommon.SanitizeKiroToolSchema(inputSchema)
 
 		// Shorten tool name if it exceeds 64 characters (common with MCP tools)
 		originalName := name

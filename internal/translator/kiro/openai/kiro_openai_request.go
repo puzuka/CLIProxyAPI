@@ -444,6 +444,7 @@ func convertOpenAIToolsToKiro(tools gjson.Result) []KiroToolWrapper {
 			parameters = parametersResult.Value()
 		}
 		parameters = ensureKiroInputSchema(parameters)
+		parameters = kirocommon.SanitizeKiroToolSchema(parameters)
 
 		// Shorten tool name if it exceeds 64 characters (common with MCP tools)
 		originalName := name
