@@ -292,6 +292,58 @@ streaming:
 #   user-agent: "codex_cli_rs/0.114.0 (Mac OS 14.2.0; x86_64) vscode/1.111.0"
 #   beta-features: "multi_agent"
 
+# Kiro provider (Amazon Q Developer / AWS CodeWhisperer)
+# ----------------------------------------------------
+# Kiro CLI / Kiro IDE backed access to Claude (Sonnet/Haiku) via AWS CodeWhisperer.
+# Recommended setup is the OAuth login flow which writes a token JSON to auth-dir:
+#
+#   cli-proxy-api -kiro-login                    # default: Google OAuth via kiro:// callback
+#   cli-proxy-api -kiro-aws-login                # AWS Builder ID device-code flow
+#   cli-proxy-api -kiro-aws-authcode-login       # AWS Builder ID auth-code flow (browser callback)
+#   cli-proxy-api -kiro-idc-login \              # Enterprise IAM Identity Center SSO
+#     -kiro-idc-start-url=https://my-org.awsapps.com/start \
+#     -kiro-idc-region=us-east-1 \
+#     -kiro-idc-flow=device                      # or "authcode"
+#   cli-proxy-api -kiro-import                   # Import existing Kiro IDE / kiro-cli cache
+#
+# After login, tokens land in auth-dir and are auto-refreshed in the background.
+# The block below is OPTIONAL and lets you pre-seed credentials inline (e.g. in CI).
+#
+# kiro:
+#   - token-file: "~/.aws/sso/cache/kiro-auth-token.json" # path to a Kiro IDE / kiro-cli token cache
+#     region: "us-east-1"            # optional, default us-east-1
+#     preferred-endpoint: "codewhisperer" # "codewhisperer" (IDE quota, default) or "amazonq" (CLI quota)
+#     # agent-task-type: "vibe"      # optional, "vibe" / "dev" / "chat" — affects upstream system prompt
+#     # proxy-url: "socks5://proxy.example.com:1080" # optional per-credential proxy override
+#   - access-token: "eyJ..."         # alternative: inline token (will not auto-refresh on its own)
+#     refresh-token: "eyJ..."        # required for refresh
+#     profile-arn: "arn:aws:codewhisperer:us-east-1:..." # CodeWhisperer profile ARN
+#     region: "us-east-1"
+#     start-url: "https://my-org.awsapps.com/start" # required for IAM Identity Center entries
+
+# Pin the Kiro client fingerprint (advanced). When unset, Kiro requests use a
+# randomly-rotated fingerprint pulled from the built-in pool. Set this if you need a
+# stable User-Agent / SDK version pair for compliance or troubleshooting.
+# kiro-fingerprint:
+#   oidc-sdk-version: "aws-sdk-js/3.749.0"
+#   runtime-sdk-version: "node/v22.11.0"
+#   streaming-sdk-version: "aws-sdk-js/3.749.0"
+#   os-type: "Mac OS X"
+#   os-version: "14.6.1"
+#   node-version: "v22.11.0"
+#   kiro-version: "0.1.30"
+#   kiro-hash: "abc123def456"
+
+# Global default Kiro endpoint preference applied to all Kiro auths that do not set
+# `preferred-endpoint` themselves. Values: "codewhisperer" (default, IDE quota) or
+# "amazonq" (CLI quota).
+# kiro-preferred-endpoint: "codewhisperer"
+
+# Open OAuth URLs in the browser's incognito/private window when supported. Useful
+# for switching between multiple Kiro accounts without logging out of the current
+# browser session. Default: false.
+# incognito-browser: false
+
 # OpenAI compatibility providers
 # openai-compatibility:
 #   - name: "openrouter" # The name of the provider; it will be used in the user agent and other places.

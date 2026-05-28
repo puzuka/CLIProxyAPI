@@ -70,6 +70,14 @@ func main() {
 	var antigravityLogin bool
 	var kimiLogin bool
 	var xaiLogin bool
+	var kiroLogin bool
+	var kiroAWSLogin bool
+	var kiroAWSAuthCodeLogin bool
+	var kiroIDCLogin bool
+	var kiroImport bool
+	var kiroIDCStartURL string
+	var kiroIDCRegion string
+	var kiroIDCFlow string
 	var projectID string
 	var vertexImport string
 	var vertexImportPrefix string
@@ -91,6 +99,14 @@ func main() {
 	flag.BoolVar(&antigravityLogin, "antigravity-login", false, "Login to Antigravity using OAuth")
 	flag.BoolVar(&kimiLogin, "kimi-login", false, "Login to Kimi using OAuth")
 	flag.BoolVar(&xaiLogin, "xai-login", false, "Login to xAI using OAuth")
+	flag.BoolVar(&kiroLogin, "kiro-login", false, "Login to Kiro (Amazon Q / CodeWhisperer) via Google OAuth (default)")
+	flag.BoolVar(&kiroAWSLogin, "kiro-aws-login", false, "Login to Kiro using AWS Builder ID device-code flow")
+	flag.BoolVar(&kiroAWSAuthCodeLogin, "kiro-aws-authcode-login", false, "Login to Kiro using AWS Builder ID authorization-code flow (browser callback)")
+	flag.BoolVar(&kiroIDCLogin, "kiro-idc-login", false, "Login to Kiro using AWS IAM Identity Center (Enterprise SSO)")
+	flag.BoolVar(&kiroImport, "kiro-import", false, "Import Kiro credentials from a Kiro IDE / kiro-cli local cache")
+	flag.StringVar(&kiroIDCStartURL, "kiro-idc-start-url", "", "IAM Identity Center start URL (use with -kiro-idc-login)")
+	flag.StringVar(&kiroIDCRegion, "kiro-idc-region", "", "IAM Identity Center region, e.g. us-east-1 (use with -kiro-idc-login)")
+	flag.StringVar(&kiroIDCFlow, "kiro-idc-flow", "device", "IAM Identity Center flow: device or authcode (use with -kiro-idc-login)")
 	flag.StringVar(&projectID, "project_id", "", "Project ID (Gemini only, not required)")
 	flag.StringVar(&configPath, "config", DefaultConfigPath, "Configure File Path")
 	flag.StringVar(&vertexImport, "vertex-import", "", "Import Vertex service account key JSON file")
@@ -627,6 +643,21 @@ func main() {
 		cmd.DoKimiLogin(cfg, options)
 	} else if xaiLogin {
 		cmd.DoXAILogin(cfg, options)
+	} else if kiroLogin {
+		// Default Kiro login: Google OAuth via kiro:// protocol callback.
+		cmd.DoKiroLogin(cfg, options)
+	} else if kiroAWSLogin {
+		// Kiro AWS Builder ID device-code flow.
+		cmd.DoKiroAWSLogin(cfg, options)
+	} else if kiroAWSAuthCodeLogin {
+		// Kiro AWS Builder ID authorization-code flow (browser callback).
+		cmd.DoKiroAWSAuthCodeLogin(cfg, options)
+	} else if kiroIDCLogin {
+		// Kiro IAM Identity Center (Enterprise) SSO flow.
+		cmd.DoKiroIDCLogin(cfg, options, kiroIDCStartURL, kiroIDCRegion, kiroIDCFlow)
+	} else if kiroImport {
+		// Import Kiro credentials from local Kiro IDE / kiro-cli cache.
+		cmd.DoKiroImport(cfg, options)
 	} else {
 		// In cloud deploy mode without config file, just wait for shutdown signals
 		if isCloudDeploy && !configFileExists {
