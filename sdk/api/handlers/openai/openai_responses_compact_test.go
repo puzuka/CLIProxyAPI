@@ -11,6 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/klauspost/compress/zstd"
+	internalconfig "github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/api/handlers"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
@@ -511,4 +512,155 @@ func (e *payloadCaptureExecutor) Execute(ctx context.Context, auth *coreauth.Aut
 	e.alt = opts.Alt
 	e.payload = append(e.payload[:0], req.Payload...)
 	return coreexecutor.Response{Payload: []byte(`{"ok":true}`)}, nil
+}
+
+
+// setUserAPIKeyMiddleware injects an API key into the gin context the way
+// the production auth middleware does, so apikeypolicy.CheckRequest can
+// resolve metadata for the caller.
+func setUserAPIKeyMiddleware(apiKey string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		c.Set("userApiKey", apiKey)
+		c.Next()
+	}
+}
+
+// TestCompactPolicyChecksOriginalModelBeforeFallback exercises approach B:
+// when an API key is restricted to a specific model family (e.g. "deepseek*")
+// and compact-fallback rewrites the user's requested model to a system
+// fallback (e.g. "gpt-5.5"), the policy must be evaluated against the
+// *original* model the user requested — not the substituted one. Otherwise
+// keys with model whitelists silently lose compact support.
+func TestCompactPolicyChecksOriginalModelBeforeFallback(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	customCompat := &providerCaptureExecutor{provider: "opencode-go"}
+	codex := &providerCaptureExecutor{provider: "codex"}
+	manager := coreauth.NewManager(nil, nil, nil)
+	manager.RegisterExecutor(customCompat)
+	manager.RegisterExecutor(codex)
+
+	customAuth := &coreauth.Auth{ID: "policy-opencode", Provider: customCompat.Identifier(), Status: coreauth.StatusActive}
+	if _, err := manager.Register(context.Background(), customAuth); err != nil {
+		t.Fatalf("Register opencode auth: %v", err)
+	}
+	codexAuth := &coreauth.Auth{ID: "policy-codex", Provider: codex.Identifier(), Status: coreauth.StatusActive}
+	if _, err := manager.Register(context.Background(), codexAuth); err != nil {
+		t.Fatalf("Register codex auth: %v", err)
+	}
+	registry.GetGlobalRegistry().RegisterClient(customAuth.ID, customAuth.Provider, []*registry.ModelInfo{{ID: "deepseek-v4-pro"}})
+	registry.GetGlobalRegistry().RegisterClient(codexAuth.ID, codexAuth.Provider, []*registry.ModelInfo{{ID: "gpt-5.5"}})
+	t.Cleanup(func() {
+		registry.GetGlobalRegistry().UnregisterClient(customAuth.ID)
+		registry.GetGlobalRegistry().UnregisterClient(codexAuth.ID)
+	})
+
+	const apiKey = "test-deepseek-only"
+	cfg := &sdkconfig.SDKConfig{}
+	cfg.APIKeys = []string{apiKey}
+	cfg.APIKeyMetadata = map[string]internalconfig.APIKeyMetadata{
+		internalconfig.APIKeyID(apiKey): {
+			AllowedModels: []string{"deepseek*"},
+		},
+	}
+	cfg.CompactFallback.Enabled = true
+	cfg.CompactFallback.Model = "gpt-5.5"
+	cfg.CompactFallback.AppliesToProviders = []string{"*"}
+	base := handlers.NewBaseAPIHandlers(cfg, manager)
+	h := NewOpenAIResponsesAPIHandler(base)
+	router := gin.New()
+	router.Use(setUserAPIKeyMiddleware(apiKey))
+	router.POST("/v1/responses/compact", h.Compact)
+
+	// User requests deepseek-v4-pro (allowed by deepseek*). The proxy will
+	// internally substitute the model to gpt-5.5 (which is NOT in the
+	// allow-list) before reaching the executor. The pre-check on the original
+	// model must pass; the post-substitution check must be skipped.
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses/compact", strings.NewReader(`{"model":"deepseek-v4-pro","input":"hi"}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", resp.Code, resp.Body.String())
+	}
+	if codex.calls != 1 {
+		t.Fatalf("codex executor calls = %d, want 1 (fallback should fire)", codex.calls)
+	}
+	if codex.model != "gpt-5.5" {
+		t.Fatalf("codex received model = %q, want gpt-5.5", codex.model)
+	}
+}
+
+// TestCompactPolicyRejectsDisallowedOriginalModel verifies the inverse: when
+// the user requests a model that is NOT in the key's allowed-models list, the
+// compact endpoint must reject the request with 403 *before* applying any
+// fallback substitution. Otherwise a key restricted to "deepseek*" could
+// quietly perform compact on any model just by hitting the compact endpoint.
+func TestCompactPolicyRejectsDisallowedOriginalModel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	customCompat := &providerCaptureExecutor{provider: "opencode-go"}
+	codex := &providerCaptureExecutor{provider: "codex"}
+	manager := coreauth.NewManager(nil, nil, nil)
+	manager.RegisterExecutor(customCompat)
+	manager.RegisterExecutor(codex)
+
+	customAuth := &coreauth.Auth{ID: "deny-opencode", Provider: customCompat.Identifier(), Status: coreauth.StatusActive}
+	if _, err := manager.Register(context.Background(), customAuth); err != nil {
+		t.Fatalf("Register opencode auth: %v", err)
+	}
+	codexAuth := &coreauth.Auth{ID: "deny-codex", Provider: codex.Identifier(), Status: coreauth.StatusActive}
+	if _, err := manager.Register(context.Background(), codexAuth); err != nil {
+		t.Fatalf("Register codex auth: %v", err)
+	}
+	registry.GetGlobalRegistry().RegisterClient(customAuth.ID, customAuth.Provider, []*registry.ModelInfo{
+		{ID: "deepseek-v4-pro"},
+		{ID: "mimo-v2.5-pro"},
+	})
+	registry.GetGlobalRegistry().RegisterClient(codexAuth.ID, codexAuth.Provider, []*registry.ModelInfo{{ID: "gpt-5.5"}})
+	t.Cleanup(func() {
+		registry.GetGlobalRegistry().UnregisterClient(customAuth.ID)
+		registry.GetGlobalRegistry().UnregisterClient(codexAuth.ID)
+	})
+
+	const apiKey = "test-deepseek-only-deny"
+	cfg := &sdkconfig.SDKConfig{}
+	cfg.APIKeys = []string{apiKey}
+	cfg.APIKeyMetadata = map[string]internalconfig.APIKeyMetadata{
+		internalconfig.APIKeyID(apiKey): {
+			AllowedModels: []string{"deepseek*"},
+		},
+	}
+	cfg.CompactFallback.Enabled = true
+	cfg.CompactFallback.Model = "gpt-5.5"
+	cfg.CompactFallback.AppliesToProviders = []string{"*"}
+	base := handlers.NewBaseAPIHandlers(cfg, manager)
+	h := NewOpenAIResponsesAPIHandler(base)
+	router := gin.New()
+	router.Use(setUserAPIKeyMiddleware(apiKey))
+	router.POST("/v1/responses/compact", h.Compact)
+
+	// User requests mimo-v2.5-pro — not in deepseek* whitelist. Must be
+	// rejected before substitution; the error must mention the *original*
+	// model name so operators can debug the policy violation, not the
+	// internal fallback target.
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses/compact", strings.NewReader(`{"model":"mimo-v2.5-pro","input":"hi"}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403; body=%s", resp.Code, resp.Body.String())
+	}
+	if codex.calls != 0 {
+		t.Fatalf("codex executor calls = %d, want 0 (request should be denied before execution)", codex.calls)
+	}
+	if customCompat.calls != 0 {
+		t.Fatalf("opencode-go executor calls = %d, want 0", customCompat.calls)
+	}
+	if !strings.Contains(resp.Body.String(), "mimo-v2.5-pro") {
+		t.Fatalf("error body should mention the original requested model; got: %s", resp.Body.String())
+	}
+	if strings.Contains(resp.Body.String(), "gpt-5.5") {
+		t.Fatalf("error body must NOT mention the internal fallback model gpt-5.5; got: %s", resp.Body.String())
+	}
 }

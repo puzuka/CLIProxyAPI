@@ -561,6 +561,24 @@ func appendAPIResponse(c *gin.Context, data []byte) {
 	c.Set("API_RESPONSE", bytes.Clone(data))
 }
 
+// CheckAPIKeyPolicy validates the API-key policy (allowed-models, providers,
+// quota, status) for the given model name without executing the request. It is
+// intended for callers that need to enforce policy on a logical model name
+// before the runtime performs any model substitution (e.g. compact-fallback in
+// /v1/responses/compact rewrites the user-facing model to a system fallback;
+// the policy must still reflect the user's original intent).
+//
+// On success the returned ErrorMessage is nil. The provider list resolved from
+// modelName is discarded — callers re-resolve providers after any rewrite.
+func (h *BaseAPIHandler) CheckAPIKeyPolicy(ctx context.Context, handlerType, modelName string) *interfaces.ErrorMessage {
+	providers, normalizedModel, errMsg := h.getRequestDetails(modelName)
+	if errMsg != nil {
+		return errMsg
+	}
+	_, errMsg = apikeypolicy.CheckRequest(h.Cfg, apiKeyFromContext(ctx), handlerType, providers, modelName, normalizedModel, time.Now())
+	return errMsg
+}
+
 // ExecuteWithAuthManager executes a non-streaming request via the core auth manager.
 // This path is the only supported execution route.
 func (h *BaseAPIHandler) ExecuteWithAuthManager(ctx context.Context, handlerType, modelName string, rawJSON []byte, alt string) ([]byte, http.Header, *interfaces.ErrorMessage) {
@@ -577,9 +595,18 @@ func (h *BaseAPIHandler) executeWithAuthManager(ctx context.Context, handlerType
 	if errMsg != nil {
 		return nil, nil, errMsg
 	}
-	providers, errMsg = apikeypolicy.CheckRequest(h.Cfg, apiKeyFromContext(ctx), handlerType, providers, modelName, normalizedModel, time.Now())
-	if errMsg != nil {
-		return nil, nil, errMsg
+	// /v1/responses/compact applies a system-level model substitution before
+	// reaching this point (see openai.OpenAIResponsesAPIHandler.Compact). The
+	// substituted model would otherwise be checked here against the user's
+	// allowed-models policy — which reflects the user's original intent, not
+	// the proxy's internal fallback target. The Compact handler pre-checks the
+	// policy on the original requested model, so we skip the duplicate check
+	// here for that alt only.
+	if alt != "responses/compact" {
+		providers, errMsg = apikeypolicy.CheckRequest(h.Cfg, apiKeyFromContext(ctx), handlerType, providers, modelName, normalizedModel, time.Now())
+		if errMsg != nil {
+			return nil, nil, errMsg
+		}
 	}
 	reqMeta := requestExecutionMetadata(ctx)
 	reqMeta[coreexecutor.RequestedModelMetadataKey] = modelName

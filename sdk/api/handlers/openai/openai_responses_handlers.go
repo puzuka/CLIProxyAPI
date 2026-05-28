@@ -424,11 +424,24 @@ func (h *OpenAIResponsesAPIHandler) Compact(c *gin.Context) {
 
 	c.Header("Content-Type", "application/json")
 	modelName := gjson.GetBytes(rawJSON, "model").String()
+	// Enforce API-key policy (allowed-models, providers, quota, status) on the
+	// original model the client requested *before* applyCompactModelFallback
+	// rewrites it to a system-level fallback (e.g. gpt-5.5). Otherwise an
+	// operator who restricts a key to one model family would silently lose
+	// compact support, because the policy would be evaluated against the proxy's
+	// internal fallback model rather than the model the client actually asked
+	// for. executeWithAuthManager skips its duplicate check for alt =
+	// "responses/compact" since this pre-check covers it.
+	cliCtx, cliCancel := h.GetContextWithCancel(h, c, context.Background())
+	if errMsg := h.CheckAPIKeyPolicy(cliCtx, h.HandlerType(), modelName); errMsg != nil {
+		h.WriteErrorResponse(c, errMsg)
+		cliCancel(errMsg.Error)
+		return
+	}
 	if rewritten, newModel, applied := applyCompactModelFallback(h, modelName, rawJSON); applied {
 		rawJSON = rewritten
 		modelName = newModel
 	}
-	cliCtx, cliCancel := h.GetContextWithCancel(h, c, context.Background())
 	stopKeepAlive := h.StartNonStreamingKeepAlive(c, cliCtx)
 	resp, upstreamHeaders, errMsg := h.ExecuteWithAuthManager(cliCtx, h.HandlerType(), modelName, rawJSON, "responses/compact")
 	stopKeepAlive()

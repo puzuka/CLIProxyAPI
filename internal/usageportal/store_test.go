@@ -557,6 +557,48 @@ func TestEstimateCostUSDDeepseekV4ProMatchesObservedRequest(t *testing.T) {
 	}
 }
 
+// TestPricingForModelMiMo verifies overseas USD pricing for Xiaomi MiMo models
+// effective 2026-05-27, per platform.xiaomimimo.com/docs/en-US/price/pay-as-you-go.
+// Critically, this also locks in switch-case ordering: `mimo-v2.5-pro` must NOT
+// fall through to the legacy `mimo-v2-pro` $1/$3 tier.
+func TestPricingForModelMiMo(t *testing.T) {
+	cases := []struct {
+		name              string
+		provider          string
+		model             string
+		wantInput         float64
+		wantOutput        float64
+		wantCached        float64
+		wantCacheCreation float64
+	}{
+		{"v2.5 pro flat permanent rate", "mimo", "mimo-v2.5-pro", 0.435, 0.87, 0.0036, 0},
+		{"v2.5 base", "mimo", "mimo-v2.5", 0.14, 0.28, 0.0028, 0},
+		{"legacy v2 pro <=256K tier", "mimo", "mimo-v2-pro", 1.00, 3.00, 0.20, 0},
+		{"v2 omni", "mimo", "mimo-v2-omni", 0.40, 2.00, 0.08, 0},
+		{"v2 flash", "mimo", "mimo-v2-flash", 0.10, 0.30, 0.01, 0},
+		{"generic mimo falls back to v2.5 base", "mimo", "mimo", 0.14, 0.28, 0.0028, 0},
+		{"xiaomi alias falls back to v2.5 base", "xiaomi", "XiaomiMiMo/MiMo-VL-7B", 0.14, 0.28, 0.0028, 0},
+		// Ordering guard: even though "mimo-v2.5-pro" contains the substring "mimo-v2",
+		// we must hit the v2.5-pro case (cheaper), not the legacy v2-pro case ($3 output).
+		{"v2.5 pro must not match legacy v2 pro case", "", "mimo-v2.5-pro", 0.435, 0.87, 0.0036, 0},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := pricingForModel(tc.provider, tc.model)
+			if got.Input != tc.wantInput || got.Output != tc.wantOutput ||
+				got.Cached != tc.wantCached || got.CacheCreation != tc.wantCacheCreation {
+				t.Fatalf("pricingForModel(%q,%q) = %+v; want input=%v output=%v cached=%v cacheCreation=%v",
+					tc.provider, tc.model, got, tc.wantInput, tc.wantOutput, tc.wantCached, tc.wantCacheCreation)
+			}
+			// Reasoning rate should always equal output rate per Xiaomi docs (reasoning billed as output).
+			if got.Reasoning != tc.wantOutput {
+				t.Fatalf("pricingForModel(%q,%q).Reasoning = %v; want %v (= output rate)",
+					tc.provider, tc.model, got.Reasoning, tc.wantOutput)
+			}
+		})
+	}
+}
+
 
 func TestStoreSnapshotStripsUpstreamAccountFromRecentRequests(t *testing.T) {
 	store := newStore()

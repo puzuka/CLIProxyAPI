@@ -227,7 +227,7 @@ func BuildKiroPayloadFromOpenAI(openaiBody []byte, modelID, profileArn, origin s
 
 	// Check for thinking mode
 	// Supports OpenAI reasoning_effort parameter, model name hints, and Anthropic-Beta header
-	thinkingEnabled := checkThinkingModeFromOpenAIWithHeaders(openaiBody, headers)
+	thinkingEnabled, thinkingBudget := checkThinkingModeFromOpenAIWithHeaders(openaiBody, headers)
 
 	// Convert OpenAI tools to Kiro format
 	kiroTools := convertOpenAIToolsToKiro(tools)
@@ -236,16 +236,17 @@ func BuildKiroPayloadFromOpenAI(openaiBody []byte, modelID, profileArn, origin s
 	// Kiro API supports official thinking/reasoning mode via <thinking_mode> tag.
 	// When set to "enabled", Kiro returns reasoning content as official reasoningContentEvent
 	// rather than inline <thinking> tags in assistantResponseEvent.
-	// Use a conservative thinking budget to reduce latency/cost spikes in long sessions.
+	// max_thinking_length is scaled from the caller's reasoning_effort so that
+	// "extra-high" actually buys deeper thinking instead of silently capping
+	// at the previous hard-coded 16000.
 	if thinkingEnabled {
-		thinkingHint := `<thinking_mode>enabled</thinking_mode>
-<max_thinking_length>16000</max_thinking_length>`
+		thinkingHint := fmt.Sprintf("<thinking_mode>enabled</thinking_mode>\n<max_thinking_length>%d</max_thinking_length>", thinkingBudget)
 		if systemPrompt != "" {
 			systemPrompt = thinkingHint + "\n\n" + systemPrompt
 		} else {
 			systemPrompt = thinkingHint
 		}
-		log.Infof("kiro-openai: injected thinking prompt (official mode), has_tools: %v", len(kiroTools) > 0)
+		log.Infof("kiro-openai: injected thinking prompt (official mode), budget=%d, has_tools: %v", thinkingBudget, len(kiroTools) > 0)
 	}
 
 	// Process messages and build history
@@ -854,38 +855,59 @@ func buildFinalContent(content, systemPrompt string, toolResults []KiroToolResul
 	return finalContent
 }
 
+// thinkingBudgetForEffort maps an OpenAI reasoning_effort value to the Kiro
+// `<max_thinking_length>` budget. Unknown but non-empty values fall back to the
+// `high`-equivalent budget so we never silently disable thinking when a client
+// supplies a custom effort name.
+func thinkingBudgetForEffort(effort string) int {
+	switch strings.ToLower(strings.TrimSpace(effort)) {
+	case "minimal", "low":
+		return 4000
+	case "medium":
+		return 8000
+	case "high":
+		return 16000
+	case "extra-high", "extra_high", "extrahigh", "xhigh", "very-high", "very_high", "max", "maximum":
+		return 32000
+	default:
+		// auto, unspecified, or any unrecognised non-empty value
+		return 16000
+	}
+}
+
 // checkThinkingModeFromOpenAI checks if thinking mode is enabled in the OpenAI request.
-// Returns thinkingEnabled.
+// Returns thinkingEnabled and the resolved `<max_thinking_length>` budget.
 // Supports:
 // - reasoning_effort parameter (low/medium/high/auto)
 // - Model name containing "thinking" or "reason"
 // - <thinking_mode> tag in system prompt (AMP/Cursor format)
-func checkThinkingModeFromOpenAI(openaiBody []byte) bool {
+func checkThinkingModeFromOpenAI(openaiBody []byte) (bool, int) {
 	return checkThinkingModeFromOpenAIWithHeaders(openaiBody, nil)
 }
 
 // checkThinkingModeFromOpenAIWithHeaders checks if thinking mode is enabled in the OpenAI request.
-// Returns thinkingEnabled.
+// Returns (enabled, budget) where budget is the `<max_thinking_length>` to inject when enabled.
 // Supports:
 // - Anthropic-Beta header with interleaved-thinking (Claude CLI)
-// - reasoning_effort parameter (low/medium/high/auto)
+// - reasoning_effort parameter (low/medium/high/extra-high/auto)
 // - Model name containing "thinking" or "reason"
 // - <thinking_mode> tag in system prompt (AMP/Cursor format)
-func checkThinkingModeFromOpenAIWithHeaders(openaiBody []byte, headers http.Header) bool {
+func checkThinkingModeFromOpenAIWithHeaders(openaiBody []byte, headers http.Header) (bool, int) {
 	// Check Anthropic-Beta header first (Claude CLI uses this)
 	if kiroclaude.IsThinkingEnabledFromHeader(headers) {
-		log.Debugf("kiro-openai: thinking mode enabled via Anthropic-Beta header")
-		return true
+		log.Infof("kiro-openai: thinking mode enabled via Anthropic-Beta header (budget=16000)")
+		return true, 16000
 	}
 
 	// Check OpenAI format: reasoning_effort parameter
-	// Valid values: "low", "medium", "high", "auto" (not "none")
+	// Valid values: "low", "medium", "high", "extra-high", "auto" (not "none")
 	reasoningEffort := gjson.GetBytes(openaiBody, "reasoning_effort")
 	if reasoningEffort.Exists() {
 		effort := reasoningEffort.String()
 		if effort != "" && effort != "none" {
-			log.Debugf("kiro-openai: thinking mode enabled via reasoning_effort: %s", effort)
-			return true
+			budget := thinkingBudgetForEffort(effort)
+			log.Infof("kiro-openai: thinking mode enabled via reasoning_effort=%q (budget=%d)", effort, budget)
+			return true, budget
 		}
 	}
 
@@ -901,8 +923,8 @@ func checkThinkingModeFromOpenAIWithHeaders(openaiBody []byte, headers http.Head
 			if endIdx >= 0 {
 				thinkingMode := bodyStr[startIdx : startIdx+endIdx]
 				if thinkingMode == "interleaved" || thinkingMode == "enabled" {
-					log.Debugf("kiro-openai: thinking mode enabled via AMP/Cursor format: %s", thinkingMode)
-					return true
+					log.Infof("kiro-openai: thinking mode enabled via AMP/Cursor format=%q (budget=16000)", thinkingMode)
+					return true, 16000
 				}
 			}
 		}
@@ -912,12 +934,12 @@ func checkThinkingModeFromOpenAIWithHeaders(openaiBody []byte, headers http.Head
 	model := gjson.GetBytes(openaiBody, "model").String()
 	modelLower := strings.ToLower(model)
 	if strings.Contains(modelLower, "thinking") || strings.Contains(modelLower, "-reason") {
-		log.Debugf("kiro-openai: thinking mode enabled via model name hint: %s", model)
-		return true
+		log.Infof("kiro-openai: thinking mode enabled via model name hint=%q (budget=16000)", model)
+		return true, 16000
 	}
 
 	log.Debugf("kiro-openai: no thinking mode detected in OpenAI request")
-	return false
+	return false, 0
 }
 
 // hasThinkingTagInBody checks if the request body already contains thinking configuration tags.

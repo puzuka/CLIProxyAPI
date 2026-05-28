@@ -2018,6 +2018,26 @@ func pricingForModel(provider, model string) modelPricing {
 		return modelPricing{Input: 0.14, Output: 0.28, Cached: 0.0028, Reasoning: 0.28, CacheCreation: 0.14}
 	case strings.Contains(value, "qwen"):
 		return modelPricing{Input: 0.5, Output: 2, Cached: 0.25, Reasoning: 3, CacheCreation: 0.5}
+	// Xiaomi MiMo Open Platform — overseas USD pricing, effective 2026-05-27.
+	// Source: https://platform.xiaomimimo.com/docs/en-US/price/pay-as-you-go
+	// Cache Write is currently free (limited-time), so CacheCreation = 0.
+	// Reasoning tokens billed as output (Reasoning = Output rate).
+	case strings.Contains(value, "mimo-v2.5-pro"):
+		// Permanent flat pricing (no context-length tier).
+		return modelPricing{Input: 0.435, Output: 0.87, Cached: 0.0036, Reasoning: 0.87, CacheCreation: 0}
+	case strings.Contains(value, "mimo-v2.5"):
+		// Covers mimo-v2.5 base; TTS/ASR variants are free (limited-time) — fall through to 0-cost text rate.
+		return modelPricing{Input: 0.14, Output: 0.28, Cached: 0.0028, Reasoning: 0.28, CacheCreation: 0}
+	case strings.Contains(value, "mimo-v2-pro"):
+		// Legacy V2 series — using ≤256K tier (256K–1M tier doubles, but context length is not tracked).
+		return modelPricing{Input: 1.00, Output: 3.00, Cached: 0.20, Reasoning: 3.00, CacheCreation: 0}
+	case strings.Contains(value, "mimo-v2-omni"):
+		return modelPricing{Input: 0.40, Output: 2.00, Cached: 0.08, Reasoning: 2.00, CacheCreation: 0}
+	case strings.Contains(value, "mimo-v2-flash"):
+		return modelPricing{Input: 0.10, Output: 0.30, Cached: 0.01, Reasoning: 0.30, CacheCreation: 0}
+	case strings.Contains(value, "mimo") || strings.Contains(value, "xiaomi") || provider == "mimo" || provider == "xiaomi":
+		// Generic Xiaomi/MiMo fallback — default to mimo-v2.5 base rate.
+		return modelPricing{Input: 0.14, Output: 0.28, Cached: 0.0028, Reasoning: 0.28, CacheCreation: 0}
 	case strings.Contains(value, "gpt-5") || strings.Contains(value, "codex") || provider == "codex" || provider == "openai":
 		return modelPricing{Input: 3, Output: 12, Cached: 1.5, Reasoning: 18, CacheCreation: 3}
 	default:
