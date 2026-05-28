@@ -65,6 +65,49 @@ type SDKConfig struct {
 	//     model: "gpt-5.5"
 	//     applies-to-providers: ["openai-compatibility"]
 	CompactFallback CompactFallbackConfig `yaml:"compact-fallback,omitempty" json:"compact-fallback,omitempty"`
+
+	// GuidelineInjection controls whether a project-level guideline (the
+	// agent-harness-kit recommendation by default) is prepended to the system
+	// prompt of inbound requests across all four formats (claude / openai-chat
+	// / openai-responses / gemini). It defaults to ON when the block is
+	// omitted entirely from config.yaml; set `enabled: false` to opt out.
+	GuidelineInjection GuidelineInjectionConfig `yaml:"guideline-injection,omitempty" json:"guideline-injection,omitempty"`
+}
+
+// GuidelineInjectionConfig toggles and customizes system-prompt guideline
+// injection performed by the package internal/guideline. The zero value
+// (block omitted from config.yaml) results in injection enabled with the
+// built-in agent-harness-kit content prepended to whatever the client sent.
+type GuidelineInjectionConfig struct {
+	// Enabled is a tri-state pointer so we can distinguish "not set" (default
+	// ON) from "explicitly false" (opt-out). Use IsEnabled() to read.
+	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+
+	// Position controls where the content is merged relative to any system
+	// prompt the client already sent. Allowed values: "prepend" (default),
+	// "append", "replace".
+	Position string `yaml:"position,omitempty" json:"position,omitempty"`
+
+	// Content overrides the built-in guideline. When empty the package
+	// internal/guideline default (agent-harness-kit recommendation) is used.
+	Content string `yaml:"content,omitempty" json:"content,omitempty"`
+}
+
+// IsEnabled returns true unless the operator has explicitly set
+// `guideline-injection.enabled: false` in config.yaml.
+func (c GuidelineInjectionConfig) IsEnabled() bool {
+	if c.Enabled == nil {
+		return true
+	}
+	return *c.Enabled
+}
+
+// EffectivePosition returns the configured position or the default prepend.
+func (c GuidelineInjectionConfig) EffectivePosition() string {
+	if c.Position == "" {
+		return "prepend"
+	}
+	return c.Position
 }
 
 // CompactFallbackConfig configures model substitution for /v1/responses/compact

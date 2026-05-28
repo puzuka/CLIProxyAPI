@@ -17,6 +17,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	. "github.com/router-for-me/CLIProxyAPI/v7/internal/constant"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/guideline"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/interfaces"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/util"
@@ -384,6 +385,10 @@ func (h *OpenAIResponsesAPIHandler) Responses(c *gin.Context) {
 		return
 	}
 
+	// Inject project-level guideline into the `instructions` field. Default
+	// ON; operators may opt-out via guideline-injection.enabled: false.
+	rawJSON = guideline.ApplyFromConfig(guideline.FormatOpenAIResponses, rawJSON, h.Cfg)
+
 	// Check if the client requested a streaming response.
 	streamResult := gjson.GetBytes(rawJSON, "stream")
 	if streamResult.Type == gjson.True {
@@ -405,6 +410,11 @@ func (h *OpenAIResponsesAPIHandler) Compact(c *gin.Context) {
 		})
 		return
 	}
+
+	// Inject guideline into the compact request as well so the summarizer
+	// model sees the same project-level instructions as a regular Responses
+	// call. Default ON; opt out via guideline-injection.enabled: false.
+	rawJSON = guideline.ApplyFromConfig(guideline.FormatOpenAIResponses, rawJSON, h.Cfg)
 
 	streamResult := gjson.GetBytes(rawJSON, "stream")
 	if streamResult.Type == gjson.True {

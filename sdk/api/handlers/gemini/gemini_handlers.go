@@ -14,6 +14,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	. "github.com/router-for-me/CLIProxyAPI/v7/internal/constant"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/guideline"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/interfaces"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/api/handlers"
@@ -152,6 +153,14 @@ func (h *GeminiAPIHandler) GeminiHandler(c *gin.Context) {
 
 	method := action[1]
 	rawJSON, _ := c.GetRawData()
+
+	// Inject project-level guideline into systemInstruction. Only applied to
+	// content-generation methods so list-model / token-count metadata calls
+	// stay untouched. Default ON; opt out via guideline-injection.enabled.
+	switch method {
+	case "generateContent", "streamGenerateContent", "countTokens":
+		rawJSON = guideline.ApplyFromConfig(guideline.FormatGemini, rawJSON, h.Cfg)
+	}
 
 	switch method {
 	case "generateContent":

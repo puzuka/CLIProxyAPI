@@ -15,6 +15,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	. "github.com/router-for-me/CLIProxyAPI/v7/internal/constant"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/guideline"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/interfaces"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
 	responsesconverter "github.com/router-for-me/CLIProxyAPI/v7/internal/translator/openai/openai/responses"
@@ -124,6 +125,10 @@ func (h *OpenAIAPIHandler) ChatCompletions(c *gin.Context) {
 		rawJSON = responsesconverter.ConvertOpenAIResponsesRequestToOpenAIChatCompletions(modelName, rawJSON, stream)
 		stream = gjson.GetBytes(rawJSON, "stream").Bool()
 	}
+
+	// Inject project-level guideline into the system message slot. Default
+	// ON; operators may opt-out via guideline-injection.enabled: false.
+	rawJSON = guideline.ApplyFromConfig(guideline.FormatOpenAIChat, rawJSON, h.Cfg)
 
 	if stream {
 		h.handleStreamingResponse(c, rawJSON)
