@@ -26,14 +26,26 @@ type chainStreamState struct {
 	responseParam any
 }
 
-// ConvertOpenAIResponsesRequestToKiro converts an /v1/responses request body
-// into a Kiro request body. The /v1/responses → /v1/chat/completions step is
-// delegated to the canonical openai-responses converter so any future fix
-// there is automatically inherited; the second step is the same converter the
-// /v1/chat/completions handler already uses for Kiro.
+// ConvertOpenAIResponsesRequestToKiro is intentionally a no-op pass-through.
+//
+// The other Kiro translators (kiro/openai.ConvertOpenAIRequestToKiro,
+// kiro/claude.ConvertClaudeRequestToKiro) already follow this pattern: the
+// request side just returns the inbound body unchanged, and the actual
+// conversion to Kiro shape happens later in the executor via
+// kiro/openai.BuildKiroPayloadFromOpenAI / kiro/claude.BuildKiroPayload,
+// which need runtime values (origin, profileArn, agentic flags, etc.) the
+// translator pipeline does not have access to.
+//
+// Returning a transformed body here caused a double-convert in
+// internal/runtime/executor/kiro_executor.go's openai-response branch:
+// the translator turned Responses → ChatCompletions, then the executor
+// turned the ChatCompletions output as if it were still Responses, which
+// produced an empty messages array and dropped every user/assistant turn.
+// See the proxy-side dump in TEMP-DEBUG-KIRO-PAYLOAD where conversationId
+// was stable but history was 0 and currentMessage carried only the system
+// prompt header.
 func ConvertOpenAIResponsesRequestToKiro(modelName string, rawJSON []byte, stream bool) []byte {
-	chat := openairesponses.ConvertOpenAIResponsesRequestToOpenAIChatCompletions(modelName, rawJSON, stream)
-	return kiroopenai.ConvertOpenAIRequestToKiro(modelName, chat, stream)
+	return rawJSON
 }
 
 // streamState resolves (or initialises) the chained stream-state envelope
