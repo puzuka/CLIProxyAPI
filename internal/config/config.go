@@ -1220,6 +1220,7 @@ func SaveConfigPreserveComments(configFile string, cfg *Config) error {
 
 	pruneMappingToGeneratedKeys(original.Content[0], generated.Content[0], "oauth-excluded-models")
 	pruneMappingToGeneratedKeys(original.Content[0], generated.Content[0], "oauth-model-alias")
+	pruneAPIKeyMetadataNode(original.Content[0], generated.Content[0])
 
 	// Merge generated into original in-place, preserving comments/order of existing nodes.
 	mergeMappingPreserve(original.Content[0], generated.Content[0])
@@ -1785,6 +1786,73 @@ func removeMapKey(mapNode *yaml.Node, key string) {
 			mapNode.Content = append(mapNode.Content[:i], mapNode.Content[i+2:]...)
 			return
 		}
+	}
+}
+
+// pruneAPIKeyMetadataNode removes api-key-metadata entries and per-entry fields
+// from dst that no longer exist in src. Without this, fields cleared via the
+// management API (e.g. emptying allowed-providers) would never disappear from
+// the persisted YAML because mergeMappingPreserve only updates existing keys
+// and never deletes them, while omitempty omits cleared scalars/slices from
+// the generated YAML.
+//
+// Two levels are pruned:
+//  1. Entry level: each metadata entry is keyed by sha256:<hash>. An entry no
+//     longer present in src is removed entirely.
+//  2. Field level: for entries that exist in both, fields not present in the
+//     matching src entry are removed.
+//
+// Audit history is a sequence of mappings handled separately by
+// mergeMappingPreserve (sequences truncate to src length and prune missing
+// keys element-wise), so it does not need bespoke handling here.
+func pruneAPIKeyMetadataNode(dstRoot, srcRoot *yaml.Node) {
+	const key = "api-key-metadata"
+	if dstRoot == nil || srcRoot == nil {
+		return
+	}
+	if dstRoot.Kind != yaml.MappingNode || srcRoot.Kind != yaml.MappingNode {
+		return
+	}
+	dstIdx := findMapKeyIndex(dstRoot, key)
+	if dstIdx < 0 || dstIdx+1 >= len(dstRoot.Content) {
+		return
+	}
+	srcIdx := findMapKeyIndex(srcRoot, key)
+	if srcIdx < 0 {
+		// All entries gone in src — drop the whole section.
+		removeMapKey(dstRoot, key)
+		return
+	}
+	if srcIdx+1 >= len(srcRoot.Content) {
+		return
+	}
+	dstVal := dstRoot.Content[dstIdx+1]
+	srcVal := srcRoot.Content[srcIdx+1]
+	if dstVal == nil || srcVal == nil {
+		return
+	}
+	if dstVal.Kind != yaml.MappingNode || srcVal.Kind != yaml.MappingNode {
+		return
+	}
+	// Level 1: drop hash entries no longer present in src.
+	pruneMissingMapKeys(dstVal, srcVal)
+	// Level 2: for each remaining entry, drop fields missing from the matching
+	// src entry (e.g. cleared allowed-providers, scopes, tags, name).
+	for i := 0; i+1 < len(dstVal.Content); i += 2 {
+		hashKeyNode := dstVal.Content[i]
+		dstEntry := dstVal.Content[i+1]
+		if hashKeyNode == nil || dstEntry == nil || dstEntry.Kind != yaml.MappingNode {
+			continue
+		}
+		srcSubIdx := findMapKeyIndex(srcVal, hashKeyNode.Value)
+		if srcSubIdx < 0 || srcSubIdx+1 >= len(srcVal.Content) {
+			continue
+		}
+		srcEntry := srcVal.Content[srcSubIdx+1]
+		if srcEntry == nil || srcEntry.Kind != yaml.MappingNode {
+			continue
+		}
+		pruneMissingMapKeys(dstEntry, srcEntry)
 	}
 }
 
