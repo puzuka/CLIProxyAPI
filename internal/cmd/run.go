@@ -12,6 +12,7 @@ import (
 
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/api"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/visionmw"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy"
 	log "github.com/sirupsen/logrus"
 )
@@ -28,7 +29,8 @@ func StartService(cfg *config.Config, configPath string, localPassword string) {
 	builder := cliproxy.NewBuilder().
 		WithConfig(cfg).
 		WithConfigPath(configPath).
-		WithLocalManagementPassword(localPassword)
+		WithLocalManagementPassword(localPassword).
+		WithServerOptions(api.WithMiddleware(visionmw.New(cfg)))
 
 	ctxSignal, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
@@ -61,7 +63,8 @@ func StartServiceBackground(cfg *config.Config, configPath string, localPassword
 	builder := cliproxy.NewBuilder().
 		WithConfig(cfg).
 		WithConfigPath(configPath).
-		WithLocalManagementPassword(localPassword)
+		WithLocalManagementPassword(localPassword).
+		WithServerOptions(api.WithMiddleware(visionmw.New(cfg)))
 
 	ctx, cancelFn := context.WithCancel(context.Background())
 	doneCh := make(chan struct{})
