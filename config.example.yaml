@@ -355,6 +355,17 @@ streaming:
 # "amazonq" (CLI quota).
 # kiro-preferred-endpoint: "codewhisperer"
 
+# Idle read timeout (seconds) for Kiro streaming responses. If the upstream
+# (AWS CodeWhisperer) sends no bytes for this long the connection is closed so
+# the stream finalizes cleanly instead of hanging until the OS TCP timeout
+# (~15 min). Default: 300.
+# kiro-streaming-read-timeout: 300
+
+# First-byte timeout (seconds) for Kiro streaming responses. 0 (default) disables
+# it and uses kiro-streaming-read-timeout for the first byte too — safest for slow
+# "thinking" models that may take a while before the first token.
+# kiro-first-token-timeout: 0
+
 # Open OAuth URLs in the browser's incognito/private window when supported. Useful
 # for switching between multiple Kiro accounts without logging out of the current
 # browser session. Default: false.

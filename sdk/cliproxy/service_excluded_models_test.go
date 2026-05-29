@@ -65,6 +65,53 @@ func TestRegisterModelsForAuth_UsesPreMergedExcludedModelsAttribute(t *testing.T
 	}
 }
 
+func TestRegisterModelsForAuth_UsesAuthFileManualModelsOverride(t *testing.T) {
+	service := &Service{cfg: &config.Config{}}
+	auth := &coreauth.Auth{
+		ID:       "auth-copilot-manual",
+		Provider: "copilot",
+		Status:   coreauth.StatusActive,
+		Metadata: map[string]any{
+			"models": []any{
+				map[string]any{
+					"id":           "manual-gpt",
+					"display_name": "Manual GPT",
+					"type":         "copilot",
+					"owned_by":     "operator",
+				},
+			},
+		},
+	}
+
+	modelRegistry := internalregistry.GetGlobalRegistry()
+	modelRegistry.UnregisterClient(auth.ID)
+	t.Cleanup(func() {
+		modelRegistry.UnregisterClient(auth.ID)
+	})
+
+	service.registerModelsForAuth(auth)
+
+	models := modelRegistry.GetModelsForClient(auth.ID)
+	if len(models) != 1 {
+		t.Fatalf("models len = %d, want 1: %#v", len(models), models)
+	}
+	if got := models[0].ID; got != "manual-gpt" {
+		t.Fatalf("model id = %q, want manual-gpt", got)
+	}
+	if got := models[0].DisplayName; got != "Manual GPT" {
+		t.Fatalf("display name = %q, want Manual GPT", got)
+	}
+	if got := models[0].OwnedBy; got != "operator" {
+		t.Fatalf("owned_by = %q, want operator", got)
+	}
+
+	auth.Metadata["models"] = []any{}
+	service.registerModelsForAuth(auth)
+	if models := modelRegistry.GetModelsForClient(auth.ID); len(models) != 0 {
+		t.Fatalf("empty manual override should unregister models, got %#v", models)
+	}
+}
+
 func TestRegisterModelsForAuth_OpenAICompatibilityImageModelType(t *testing.T) {
 	service := &Service{
 		cfg: &config.Config{

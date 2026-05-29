@@ -54,6 +54,8 @@ type ModelInfo struct {
 	SupportedInputModalities []string `json:"supportedInputModalities,omitempty"`
 	// SupportedOutputModalities lists supported output modalities (e.g., TEXT, IMAGE)
 	SupportedOutputModalities []string `json:"supportedOutputModalities,omitempty"`
+	// SupportedEndpoints lists provider-native API endpoints that can serve this model.
+	SupportedEndpoints []string `json:"supported_endpoints,omitempty"`
 
 	// Thinking holds provider-specific reasoning/thinking budget capabilities.
 	// This is optional and currently used for Gemini thinking budget normalization.
@@ -539,6 +541,9 @@ func cloneModelInfo(model *ModelInfo) *ModelInfo {
 	}
 	if len(model.SupportedOutputModalities) > 0 {
 		copyModel.SupportedOutputModalities = append([]string(nil), model.SupportedOutputModalities...)
+	}
+	if len(model.SupportedEndpoints) > 0 {
+		copyModel.SupportedEndpoints = append([]string(nil), model.SupportedEndpoints...)
 	}
 	if model.Thinking != nil {
 		copyThinking := *model.Thinking
@@ -1285,6 +1290,16 @@ func (r *ModelRegistry) GetFirstAvailableModel(handlerType string) (string, erro
 // Returns:
 //   - []*ModelInfo: List of models registered for this client, nil if client not found
 func (r *ModelRegistry) GetModelsForClient(clientID string) []*ModelInfo {
+	return r.getModelsForClient(clientID, false)
+}
+
+// GetCallableModelsForClient returns models registered for a client that are
+// not currently suspended for non-quota reasons.
+func (r *ModelRegistry) GetCallableModelsForClient(clientID string) []*ModelInfo {
+	return r.getModelsForClient(clientID, true)
+}
+
+func (r *ModelRegistry) getModelsForClient(clientID string, callableOnly bool) []*ModelInfo {
 	r.mutex.RLock()
 	defer r.mutex.RUnlock()
 
@@ -1303,6 +1318,13 @@ func (r *ModelRegistry) GetModelsForClient(clientID string) []*ModelInfo {
 			continue
 		}
 		seen[modelID] = struct{}{}
+		if callableOnly {
+			if reg, ok := r.models[modelID]; ok && reg != nil && reg.SuspendedClients != nil {
+				if reason, suspended := reg.SuspendedClients[clientID]; suspended && !strings.EqualFold(reason, "quota") {
+					continue
+				}
+			}
+		}
 
 		// Prefer client's own model info to preserve original type/owned_by
 		if clientInfos != nil {

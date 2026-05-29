@@ -1,4 +1,25 @@
 services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: cliproxy-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: cliproxy
+      POSTGRES_PASSWORD: cliproxy_secure_pass_2026
+      POSTGRES_DB: cliproxy
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "5434:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cliproxy -d cliproxy"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - cliproxy-network
+
   cli-proxy-api:
     image: ${CLI_PROXY_IMAGE:-eceasy/cli-proxy-api:latest}
     pull_policy: always
@@ -26,3 +47,16 @@ services:
       - ${CLI_PROXY_AUTH_PATH:-./auths}:/root/.cli-proxy-api
       - ${CLI_PROXY_LOG_PATH:-./logs}:/CLIProxyAPI/logs
     restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - cliproxy-network
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  cliproxy-network:
+    driver: bridge

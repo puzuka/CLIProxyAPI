@@ -40,6 +40,8 @@ const (
 
 var antigravityOAuthTokenURL = "https://oauth2.googleapis.com/token"
 
+var apiCallTokenPlaceholders = []string{"$TOKEN$", "$GITHUB_TOKEN$", "$COPILOT_TOKEN$"}
+
 type apiCallRequest struct {
 	AuthIndexSnake  *string           `json:"auth_index"`
 	AuthIndexCamel  *string           `json:"authIndex"`
@@ -139,29 +141,34 @@ func (h *Handler) APICall(c *gin.Context) {
 	}
 
 	var hostOverride string
-	var token string
-	var tokenResolved bool
-	var tokenErr error
+	resolvedTokens := make(map[string]string)
+	resolvedTokenErrs := make(map[string]error)
 	for key, value := range reqHeaders {
-		if !strings.Contains(value, "$TOKEN$") {
-			continue
-		}
-		if !tokenResolved {
-			token, tokenErr = h.resolveTokenForAuth(c.Request.Context(), auth)
-			tokenResolved = true
-		}
-		if auth != nil && token == "" {
-			if tokenErr != nil {
-				c.JSON(http.StatusBadRequest, gin.H{"error": "auth token refresh failed"})
+		for _, placeholder := range apiCallTokenPlaceholders {
+			if !strings.Contains(value, placeholder) {
+				continue
+			}
+			token, ok := resolvedTokens[placeholder]
+			if !ok {
+				var tokenErr error
+				token, tokenErr = h.resolveTokenPlaceholder(c.Request.Context(), auth, placeholder)
+				resolvedTokens[placeholder] = token
+				resolvedTokenErrs[placeholder] = tokenErr
+			}
+			if auth != nil && token == "" {
+				if resolvedTokenErrs[placeholder] != nil {
+					c.JSON(http.StatusBadRequest, gin.H{"error": "auth token refresh failed"})
+					return
+				}
+				c.JSON(http.StatusBadRequest, gin.H{"error": "auth token not found"})
 				return
 			}
-			c.JSON(http.StatusBadRequest, gin.H{"error": "auth token not found"})
-			return
+			if token == "" {
+				continue
+			}
+			value = strings.ReplaceAll(value, placeholder, token)
 		}
-		if token == "" {
-			continue
-		}
-		reqHeaders[key] = strings.ReplaceAll(value, "$TOKEN$", token)
+		reqHeaders[key] = value
 	}
 
 	var requestBody io.Reader
@@ -264,6 +271,65 @@ func (h *Handler) resolveTokenForAuth(ctx context.Context, auth *coreauth.Auth) 
 	}
 
 	return tokenValueForAuth(auth), nil
+}
+
+func (h *Handler) resolveTokenPlaceholder(ctx context.Context, auth *coreauth.Auth, placeholder string) (string, error) {
+	switch placeholder {
+	case "$GITHUB_TOKEN$":
+		return githubTokenValueForAuth(auth), nil
+	case "$COPILOT_TOKEN$":
+		return copilotTokenValueForAuth(auth), nil
+	default:
+		return h.resolveTokenForAuth(ctx, auth)
+	}
+}
+
+func githubTokenValueForAuth(auth *coreauth.Auth) string {
+	if auth == nil {
+		return ""
+	}
+	return firstMetadataToken(auth.Metadata, "github_access_token", "githubAccessToken")
+}
+
+func copilotTokenValueForAuth(auth *coreauth.Auth) string {
+	if auth == nil {
+		return ""
+	}
+	if v := firstMetadataToken(auth.Metadata, "copilot_token", "access_token", "accessToken"); v != "" {
+		return v
+	}
+	if auth.Attributes != nil {
+		return strings.TrimSpace(auth.Attributes["api_key"])
+	}
+	return ""
+}
+
+func firstMetadataToken(metadata map[string]any, keys ...string) string {
+	if len(metadata) == 0 {
+		return ""
+	}
+	for _, key := range keys {
+		if v, ok := metadata[key].(string); ok && strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+	}
+	if tokenRaw, ok := metadata["token"]; ok && tokenRaw != nil {
+		if tokenMap, ok := tokenRaw.(map[string]any); ok {
+			for _, key := range keys {
+				if v, ok := tokenMap[key].(string); ok && strings.TrimSpace(v) != "" {
+					return strings.TrimSpace(v)
+				}
+			}
+		}
+		if tokenMap, ok := tokenRaw.(map[string]string); ok {
+			for _, key := range keys {
+				if v := strings.TrimSpace(tokenMap[key]); v != "" {
+					return v
+				}
+			}
+		}
+	}
+	return ""
 }
 
 func (h *Handler) refreshGeminiOAuthAccessToken(ctx context.Context, auth *coreauth.Auth) (string, error) {

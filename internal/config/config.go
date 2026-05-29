@@ -160,6 +160,16 @@ type Config struct {
 	// Values: "codewhisperer" (default, IDE quota) or "amazonq" (CLI quota).
 	KiroPreferredEndpoint string `yaml:"kiro-preferred-endpoint,omitempty" json:"kiro-preferred-endpoint,omitempty"`
 
+	// KiroStreamingReadTimeout is the idle read timeout (seconds) for Kiro streaming
+	// responses: if no bytes arrive within this window the upstream connection is
+	// closed so the stream finalizes instead of hanging. Defaults to 300 when <= 0.
+	KiroStreamingReadTimeout int `yaml:"kiro-streaming-read-timeout,omitempty" json:"kiro-streaming-read-timeout,omitempty"`
+
+	// KiroFirstTokenTimeout is the timeout (seconds) for the first byte of a Kiro
+	// streaming response. 0 (default) disables it and falls back to the streaming
+	// read timeout, which is safest for slow "thinking" models.
+	KiroFirstTokenTimeout int `yaml:"kiro-first-token-timeout,omitempty" json:"kiro-first-token-timeout,omitempty"`
+
 	// IncognitoBrowser enables opening OAuth URLs in incognito/private browsing mode.
 	// Useful for logging in with a different account without logging out of the current session.
 	IncognitoBrowser bool `yaml:"incognito-browser,omitempty" json:"incognito-browser,omitempty"`

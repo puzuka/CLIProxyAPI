@@ -55,6 +55,7 @@ func buildCodexClientModels(models []map[string]any) []map[string]any {
 			entry := cloneCodexClientModelMap(template)
 			sanitizeCodexClientReasoningMetadata(entry)
 			applyCodexClientVisibilityOverride(entry, id)
+			applyCodexClientDisplayLabel(entry, id, model)
 			result = append(result, entry)
 			continue
 		}
@@ -63,12 +64,21 @@ func buildCodexClientModels(models []map[string]any) []map[string]any {
 		applyCodexClientModelMetadata(entry, id, model)
 		sanitizeCodexClientReasoningMetadata(entry)
 		applyCodexClientVisibilityOverride(entry, id)
+		applyCodexClientDisplayLabel(entry, id, model)
 		result = append(result, entry)
 	}
 
 	sort.SliceStable(result, func(i, j int) bool {
-		return codexClientModelPriority(result[i]) < codexClientModelPriority(result[j])
+		left := codexClientModelSortKey(result[i])
+		right := codexClientModelSortKey(result[j])
+		if left == right {
+			return stringModelValue(result[i], "slug") < stringModelValue(result[j], "slug")
+		}
+		return left < right
 	})
+	for i, model := range result {
+		model["priority"] = i
+	}
 
 	return result
 }
@@ -154,6 +164,82 @@ func applyCodexClientVisibilityOverride(entry map[string]any, id string) {
 	case "grok-imagine-image-quality", "gpt-image-2", "grok-imagine-image", "grok-imagine-video":
 		entry["visibility"] = "hide"
 	}
+}
+
+func applyCodexClientDisplayLabel(entry map[string]any, id string, model map[string]any) {
+	if entry == nil {
+		return
+	}
+	displayName := stringModelValue(entry, "display_name")
+	if displayName == "" {
+		displayName = stringModelValue(model, "display_name")
+	}
+	if displayName == "" {
+		displayName = id
+	}
+
+	providerName := codexClientProviderLabel(model)
+	if providerName == "" {
+		providerName = codexClientProviderLabel(entry)
+	}
+	if providerName == "" || codexClientDisplayHasProviderPrefix(displayName, providerName) {
+		entry["display_name"] = displayName
+		return
+	}
+
+	entry["display_name"] = providerName + " / " + displayName
+}
+
+func codexClientDisplayHasProviderPrefix(displayName, providerName string) bool {
+	displayName = strings.TrimSpace(displayName)
+	providerName = strings.TrimSpace(providerName)
+	if displayName == "" || providerName == "" {
+		return false
+	}
+	prefix := strings.ToLower(providerName + " / ")
+	return strings.HasPrefix(strings.ToLower(displayName), prefix)
+}
+
+func codexClientProviderLabel(model map[string]any) string {
+	for _, key := range []string{"provider", "provider_key", "owned_by", "type"} {
+		if label := formatCodexClientProviderName(stringModelValue(model, key)); label != "" {
+			return label
+		}
+	}
+	return ""
+}
+
+func formatCodexClientProviderName(provider string) string {
+	provider = strings.TrimSpace(provider)
+	if provider == "" {
+		return ""
+	}
+	switch strings.ToLower(provider) {
+	case "openai":
+		return "OpenAI"
+	case "xai":
+		return "xAI"
+	case "ai21":
+		return "AI21"
+	case "aws":
+		return "AWS"
+	case "openai-compatibility":
+		return "OpenAI Compatibility"
+	}
+
+	parts := strings.FieldsFunc(provider, func(r rune) bool {
+		return r == '-' || r == '_' || r == '.'
+	})
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		lower := strings.ToLower(part)
+		out = append(out, strings.ToUpper(lower[:1])+lower[1:])
+	}
+	return strings.Join(out, " ")
 }
 
 func applyCodexClientThinkingMetadata(entry map[string]any, thinking *registry.ThinkingSupport) {
@@ -254,14 +340,12 @@ func codexClientReasoningDescription(level string) string {
 	}
 }
 
-func codexClientModelPriority(model map[string]any) int {
-	if priority, ok := model["priority"].(int); ok {
-		return priority
+func codexClientModelSortKey(model map[string]any) string {
+	key := stringModelValue(model, "display_name")
+	if key == "" {
+		key = stringModelValue(model, "slug")
 	}
-	if priority, ok := model["priority"].(float64); ok {
-		return int(priority)
-	}
-	return 100
+	return strings.ToLower(key)
 }
 
 func stringModelValue(model map[string]any, key string) string {

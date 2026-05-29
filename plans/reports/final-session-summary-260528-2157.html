@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=content-width, initial-scale=1.0">
+<title>Final Update: Guideline Injection + Postgres Store</title>
+<script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50 p-8">
+<div class="max-w-4xl mx-auto bg-white rounded-lg shadow-lg p-8">
+<h1 class="text-3xl font-bold text-green-600 mb-6">✅ Final Update Complete</h1>
+
+<div class="bg-green-50 border-l-4 border-green-500 p-4 mb-6">
+<p class="font-semibold text-green-800">Production server updated với Guideline Injection + Postgres Usage Store</p>
+<p class="text-sm text-green-700 mt-2">Version: v7.1.20-44-gd3f2d1a5 | Deployed: 2026-05-28 21:56:46</p>
+</div>
+
+<h2 class="text-2xl font-bold text-gray-800 mb-4">📦 Deployment Summary</h2>
+
+<div class="grid grid-cols-2 gap-4 mb-6">
+<div class="bg-blue-50 p-4 rounded">
+<h3 class="font-bold text-blue-800 mb-2">Service Status</h3>
+<ul class="text-sm space-y-1">
+<li>• PID: <code>34381</code></li>
+<li>• Started: 21:56:46</li>
+<li>• Memory: ~72 MB</li>
+<li>• Models: 113 available</li>
+<li>• Clients: 61 loaded</li>
+</ul>
+</div>
+
+<div class="bg-purple-50 p-4 rounded">
+<h3 class="font-bold text-purple-800 mb-2">Version Info</h3>
+<ul class="text-sm space-y-1">
+<li>• Commit: <code>d3f2d1a5</code></li>
+<li>• Tag: v7.1.20-44</li>
+<li>• Branch: main</li>
+<li>• Postgres: ✅ Enabled</li>
+<li>• Compact fallback: ✅ Enabled</li>
+</ul>
+</div>
+</div>
+
+<h2 class="text-2xl font-bold text-gray-800 mb-4">🆕 Latest Updates (3 commits)</h2>
+
+<div class="space-y-2 text-sm mb-6">
+<div class="bg-gray-50 p-3 rounded border-l-4 border-blue-500">
+<p class="font-mono text-xs text-gray-600">d3f2d1a5</p>
+<p class="font-semibold">chore(guideline): tone down injection log to debug after observe pass</p>
+<p class="text-xs text-gray-600 mt-1">Reduce log verbosity for guideline injection</p>
+</div>
+
+<div class="bg-gray-50 p-3 rounded border-l-4 border-green-500">
+<p class="font-mono text-xs text-gray-600">aa4ddb17</p>
+<p class="font-semibold">fix(config): persist cleared api-key-metadata fields across YAML save</p>
+<p class="text-xs text-gray-600 mt-1">Fix config save to preserve cleared metadata fields</p>
+</div>
+
+<div class="bg-gray-50 p-3 rounded border-l-4 border-purple-500">
+<p class="font-mono text-xs text-gray-600">2a1c75a8</p>
+<p class="font-semibold">feat(guideline): inject agent-harness-kit hint into system prompt across 4 formats</p>
+<p class="text-xs text-gray-600 mt-1">Add guideline injection for OpenAI, Claude, Gemini, Responses formats</p>
+</div>
+</div>
+
+<h2 class="text-2xl font-bold text-gray-800 mb-4">📊 Changes Overview</h2>
+
+<table class="w-full text-sm border mb-6">
+<thead class="bg-gray-100">
+<tr>
+<th class="border p-2 text-left">Category</th>
+<th class="border p-2 text-left">Files</th>
+<th class="border p-2 text-left">Lines</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="border p-2">Guideline Injection</td>
+<td class="border p-2">9 new files</td>
+<td class="border p-2">+1,028 lines</td>
+</tr>
+<tr>
+<td class="border p-2">Config Management</td>
+<td class="border p-2">3 files</td>
+<td class="border p-2">+127 lines</td>
+</tr>
+<tr>
+<td class="border p-2">Handler Updates</td>
+<td class="border p-2">4 files</td>
+<td class="border p-2">+29 lines</td>
+</tr>
+<tr>
+<td class="border p-2">Tests</td>
+<td class="border p-2">2 files</td>
+<td class="border p-2">+467 lines</td>
+</tr>
+</tbody>
+</table>
+
+<h2 class="text-2xl font-bold text-gray-800 mb-4">🎯 Key Features</h2>
+
+<div class="space-y-3">
+<div class="bg-blue-50 p-4 rounded">
+<h3 class="font-bold text-blue-900 mb-2">1. Guideline Injection</h3>
+<p class="text-sm text-gray-700">Inject agent-harness-kit hints vào system prompts cho OpenAI, Claude, Gemini, và Responses formats. Giúp AI agents hiểu context và guidelines tốt hơn.</p>
+</div>
+
+<div class="bg-green-50 p-4 rounded">
+<h3 class="font-bold text-green-900 mb-2">2. Postgres Usage Store</h3>
+<p class="text-sm text-gray-700">Usage logs được persist vào PostgreSQL (port 5434). Data survive restarts, support historical analytics và advanced queries.</p>
+</div>
+
+<div class="bg-purple-50 p-4 rounded">
+<h3 class="font-bold text-purple-900 mb-2">3. Compact Fallback</h3>
+<p class="text-sm text-gray-700">OpenAI-compatible providers (DeepSeek) tự động fallback sang Codex (gpt-5.5) khi gọi <code>/responses/compact</code>.</p>
+</div>
+
+<div class="bg-yellow-50 p-4 rounded">
+<h3 class="font-bold text-yellow-900 mb-2">4. Config Persistence</h3>
+<p class="text-sm text-gray-700">Fix YAML save để preserve cleared api-key-metadata fields correctly.</p>
+</div>
+</div>
+
+<h2 class="text-2xl font-bold text-gray-800 mb-4 mt-8">📈 Infrastructure</h2>
+
+<div class="grid grid-cols-2 gap-4 mb-6">
+<div class="bg-gray-50 p-4 rounded">
+<h3 class="font-bold text-gray-800 mb-2">CLIProxyAPI Service</h3>
+<ul class="text-sm space-y-1">
+<li>• Port: 8317</li>
+<li>• LaunchAgent: com.vibelab.cliproxyapi</li>
+<li>• Config: ~/.cli-proxy-api/config.9router.yaml</li>
+<li>• Logs: logs/stdout.log</li>
+</ul>
+</div>
+
+<div class="bg-gray-50 p-4 rounded">
+<h3 class="font-bold text-gray-800 mb-2">Postgres Container</h3>
+<ul class="text-sm space-y-1">
+<li>• Container: cliproxy-postgres</li>
+<li>• Port: 5434</li>
+<li>• Database: cliproxy</li>
+<li>• Volume: postgres_data</li>
+</ul>
+</div>
+</div>
+
+<h2 class="text-2xl font-bold text-gray-800 mb-4">✅ Verification</h2>
+
+<div class="grid grid-cols-4 gap-3 mb-6">
+<div class="bg-green-50 p-3 rounded text-center">
+<p class="text-2xl font-bold text-green-600">✓</p>
+<p class="text-xs text-gray-600">Service Running</p>
+</div>
+<div class="bg-green-50 p-3 rounded text-center">
+<p class="text-2xl font-bold text-green-600">✓</p>
+<p class="text-xs text-gray-600">Postgres Connected</p>
+</div>
+<div class="bg-green-50 p-3 rounded text-center">
+<p class="text-2xl font-bold text-green-600">✓</p>
+<p class="text-xs text-gray-600">113 Models</p>
+</div>
+<div class="bg-green-50 p-3 rounded text-center">
+<p class="text-2xl font-bold text-green-600">✓</p>
+<p class="text-xs text-gray-600">Guidelines Active</p>
+</div>
+</div>
+
+<h2 class="text-2xl font-bold text-gray-800 mb-4">🔍 Monitoring</h2>
+
+<div class="bg-gray-50 p-4 rounded">
+<p class="font-semibold mb-2">Quick Commands:</p>
+<pre class="text-xs bg-gray-800 text-green-400 p-3 rounded space-y-1">
+# Service status
+ps aux | grep cli-proxy-api | grep -v grep
+
+# Watch logs
+tail -f logs/stdout.log
+
+# Check Postgres
+docker ps | grep cliproxy-postgres
+
+# Query usage stats
+docker exec cliproxy-postgres psql -U cliproxy -d cliproxy -c "SELECT COUNT(*) FROM usage_events;"
+
+# Test API
+curl -s http://localhost:8317/v1/models | jq '.data | length'
+</pre>
+</div>
+
+<h2 class="text-2xl font-bold text-gray-800 mb-4 mt-8">📝 Session Summary</h2>
+
+<div class="space-y-2 text-sm">
+<div class="flex items-start gap-2">
+<span class="text-green-600 font-bold">✓</span>
+<p><strong>Root cause analysis:</strong> Identified compact 404 error với DeepSeek</p>
+</div>
+<div class="flex items-start gap-2">
+<span class="text-green-600 font-bold">✓</span>
+<p><strong>Compact fallback:</strong> Enabled config để fallback DeepSeek → Codex</p>
+</div>
+<div class="flex items-start gap-2">
+<span class="text-green-600 font-bold">✓</span>
+<p><strong>Postgres deployment:</strong> Setup container + migrate từ memory → postgres</p>
+</div>
+<div class="flex items-start gap-2">
+<span class="text-green-600 font-bold">✓</span>
+<p><strong>Latest updates:</strong> Pull 11 commits (Kiro fixes + Guideline injection)</p>
+</div>
+<div class="flex items-start gap-2">
+<span class="text-green-600 font-bold">✓</span>
+<p><strong>Production ready:</strong> Service running stable với all features enabled</p>
+</div>
+</div>
+
+<div class="mt-8 pt-6 border-t">
+<p class="text-sm text-gray-500">Final Deployment: 2026-05-28 21:56:46</p>
+<p class="text-sm text-gray-500">Version: v7.1.20-44-gd3f2d1a5</p>
+<p class="text-sm text-gray-500">Total commits: 11 (e0073325 → d3f2d1a5)</p>
+<p class="text-sm"><span class="text-green-600 font-bold">Status: PRODUCTION LIVE ✅</span></p>
+</div>
+</div>
+</body>
+</html>

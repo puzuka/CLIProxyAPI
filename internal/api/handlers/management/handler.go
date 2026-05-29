@@ -15,6 +15,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/buildinfo"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
+	apiHandlers "github.com/router-for-me/CLIProxyAPI/v7/sdk/api/handlers"
 	sdkAuth "github.com/router-for-me/CLIProxyAPI/v7/sdk/auth"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
 	"golang.org/x/crypto/bcrypt"
@@ -46,6 +47,7 @@ type Handler struct {
 	envSecret           string
 	logDir              string
 	postAuthHook        coreauth.PostAuthHook
+	apiHandler          *apiHandlers.BaseAPIHandler
 }
 
 // NewHandler creates a new management handler instance.
@@ -118,6 +120,16 @@ func (h *Handler) SetAuthManager(manager *coreauth.Manager) {
 	}
 	h.mu.Lock()
 	h.authManager = manager
+	h.mu.Unlock()
+}
+
+// SetAPIHandler updates the API execution handler used by management diagnostics.
+func (h *Handler) SetAPIHandler(handler *apiHandlers.BaseAPIHandler) {
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	h.apiHandler = handler
 	h.mu.Unlock()
 }
 

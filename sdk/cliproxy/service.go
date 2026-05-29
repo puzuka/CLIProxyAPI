@@ -117,6 +117,7 @@ func newDefaultAuthManager() *sdkAuth.Manager {
 		sdkAuth.NewCodexAuthenticator(),
 		sdkAuth.NewClaudeAuthenticator(),
 		sdkAuth.NewXAIAuthenticator(),
+		sdkAuth.NewCopilotAuthenticator(),
 	)
 }
 
@@ -436,6 +437,8 @@ func (s *Service) ensureExecutorsForAuthWithMode(a *coreauth.Auth, forceReplace 
 		s.coreManager.RegisterExecutor(executor.NewKimiExecutor(s.cfg))
 	case "xai":
 		s.coreManager.RegisterExecutor(executor.NewXAIExecutor(s.cfg))
+	case "copilot":
+		s.coreManager.RegisterExecutor(executor.NewCopilotExecutor(s.cfg))
 	case "kiro":
 		s.coreManager.RegisterExecutor(executor.NewKiroExecutor(s.cfg))
 	default:
@@ -594,6 +597,7 @@ func (s *Service) registerHomeExecutors() {
 	s.coreManager.RegisterExecutor(executor.NewAIStudioExecutor(s.cfg, "", s.wsGateway))
 	s.coreManager.RegisterExecutor(executor.NewAntigravityExecutor(s.cfg))
 	s.coreManager.RegisterExecutor(executor.NewKimiExecutor(s.cfg))
+	s.coreManager.RegisterExecutor(executor.NewCopilotExecutor(s.cfg))
 	s.coreManager.RegisterExecutor(executor.NewKiroExecutor(s.cfg))
 	s.coreManager.RegisterExecutor(executor.NewOpenAICompatExecutor("openai-compatibility", s.cfg))
 }
@@ -1088,6 +1092,16 @@ func (s *Service) registerModelsForAuth(a *coreauth.Auth) {
 			excluded = strings.Split(val, ",")
 		}
 	}
+	if manualModels, manualSet := registry.ManualModelsFromMetadata(a.Metadata, provider, provider); manualSet {
+		models := applyExcludedModels(manualModels, excluded)
+		models = applyOAuthModelAlias(s.cfg, provider, authKind, models)
+		if key := provider; key != "" {
+			s.registerResolvedModelsForAuth(a, key, applyModelPrefixes(models, a.Prefix, s.cfg != nil && s.cfg.ForceModelPrefix))
+		} else {
+			s.registerResolvedModelsForAuth(a, strings.ToLower(strings.TrimSpace(a.Provider)), applyModelPrefixes(models, a.Prefix, s.cfg != nil && s.cfg.ForceModelPrefix))
+		}
+		return
+	}
 	var models []*ModelInfo
 	switch provider {
 	case "gemini":
@@ -1165,6 +1179,13 @@ func (s *Service) registerModelsForAuth(a *coreauth.Auth) {
 	case "xai":
 		models = registry.GetXAIModels()
 		models = applyExcludedModels(models, excluded)
+	case "copilot":
+		// Copilot /models is account-scoped but can still over-report models that
+		// fail at request time. Do not expose static fallback models for OAuth
+		// auths; the async refresh below registers only live-probed callable models.
+		GlobalModelRegistry().UnregisterClient(a.ID)
+		s.refreshCopilotDynamicModels(a, excluded)
+		return
 	case "kiro":
 		models = registry.GetKiroModels()
 		models = applyExcludedModels(models, excluded)

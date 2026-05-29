@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Deployment Complete: Compact Fallback Enabled</title>
+<script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50 p-8">
+<div class="max-w-4xl mx-auto bg-white rounded-lg shadow-lg p-8">
+<h1 class="text-3xl font-bold text-green-600 mb-6">✅ Deployment Complete: Compact Fallback Enabled</h1>
+
+<div class="bg-green-50 border-l-4 border-green-500 p-4 mb-6">
+<p class="font-semibold text-green-800">Production server đã được rebuild và restart với compact fallback enabled!</p>
+<p class="text-sm text-green-700 mt-2">Timestamp: 2026-05-28 18:46:32</p>
+</div>
+
+<h2 class="text-2xl font-bold text-gray-800 mb-4">📊 Deployment Summary</h2>
+
+<div class="grid grid-cols-2 gap-4 mb-6">
+<div class="bg-blue-50 p-4 rounded">
+<h3 class="font-bold text-blue-800 mb-2">Service Info</h3>
+<ul class="text-sm space-y-1">
+<li>• PID: <code>40256</code> (new)</li>
+<li>• Started: 18:46:32</li>
+<li>• Memory: ~123 MB</li>
+<li>• Port: 8317</li>
+<li>• LaunchAgent: com.vibelab.cliproxyapi</li>
+</ul>
+</div>
+
+<div class="bg-purple-50 p-4 rounded">
+<h3 class="font-bold text-purple-800 mb-2">Config</h3>
+<ul class="text-sm space-y-1">
+<li>• Path: <code>~/.cli-proxy-api/config.9router.yaml</code></li>
+<li>• Compact fallback: <span class="text-green-600 font-bold">ENABLED</span></li>
+<li>• Fallback model: <code>gpt-5.5</code></li>
+<li>• Applies to: <code>*</code> (all non-Codex)</li>
+</ul>
+</div>
+</div>
+
+<h2 class="text-2xl font-bold text-gray-800 mb-4">🔧 Changes Applied</h2>
+
+<div class="space-y-3">
+<div class="bg-gray-50 p-3 rounded">
+<p class="font-semibold text-gray-800">1. Updated Config</p>
+<pre class="bg-gray-800 text-green-400 p-2 rounded text-xs mt-2">compact-fallback:
+  enabled: true
+  model: "gpt-5.5"
+  applies-to-providers:
+    - "*"</pre>
+</div>
+
+<div class="bg-gray-50 p-3 rounded">
+<p class="font-semibold text-gray-800">2. Rebuilt Binary</p>
+<p class="text-sm text-gray-600">Built from commit: <code>3cd9fece</code> (includes e0073325 compact fallback)</p>
+</div>
+
+<div class="bg-gray-50 p-3 rounded">
+<p class="font-semibold text-gray-800">3. Restarted Service</p>
+<p class="text-sm text-gray-600">Via launchctl kickstart, config auto-reloaded at 18:46:12</p>
+</div>
+</div>
+
+<h2 class="text-2xl font-bold text-gray-800 mb-4 mt-8">✅ Verification</h2>
+
+<table class="w-full text-sm border mb-6">
+<thead class="bg-gray-100">
+<tr>
+<th class="border p-2 text-left">Check</th>
+<th class="border p-2 text-left">Status</th>
+<th class="border p-2 text-left">Details</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="border p-2">Service Running</td>
+<td class="border p-2"><span class="text-green-600 font-bold">✅ PASS</span></td>
+<td class="border p-2">PID 40256, Memory 123MB</td>
+</tr>
+<tr>
+<td class="border p-2">Config Loaded</td>
+<td class="border p-2"><span class="text-green-600 font-bold">✅ PASS</span></td>
+<td class="border p-2">compact-fallback enabled: true</td>
+</tr>
+<tr>
+<td class="border p-2">DeepSeek Models</td>
+<td class="border p-2"><span class="text-green-600 font-bold">✅ PASS</span></td>
+<td class="border p-2">deepseek-v4-pro, deepseek-reasoner available</td>
+</tr>
+<tr>
+<td class="border p-2">Codex Models</td>
+<td class="border p-2"><span class="text-green-600 font-bold">✅ PASS</span></td>
+<td class="border p-2">gpt-5.5 available for fallback</td>
+</tr>
+</tbody>
+</table>
+
+<h2 class="text-2xl font-bold text-gray-800 mb-4">🎯 Expected Behavior</h2>
+
+<div class="bg-blue-50 p-4 rounded mb-6">
+<p class="font-semibold text-blue-900 mb-3">Khi Codex Desktop gọi <code>POST /v1/responses/compact</code> với model DeepSeek:</p>
+<ol class="list-decimal ml-6 space-y-2 text-sm">
+<li>Handler detect model <code>deepseek-v4-pro</code> → provider <code>openai-compatibility</code></li>
+<li>Check compact-fallback config → enabled ✅, applies to "*" ✅</li>
+<li>Rewrite payload: model <code>deepseek-v4-pro</code> → <code>gpt-5.5</code></li>
+<li>Strip reasoning items (encrypted_content không valid cho Codex)</li>
+<li>Route qua CodexExecutor → <code>chatgpt.com/backend-api/codex/responses/compact</code></li>
+<li><span class="text-green-600 font-bold">✅ Return 200 OK với response.compaction payload</span></li>
+</ol>
+</div>
+
+<h2 class="text-2xl font-bold text-gray-800 mb-4">📝 Next Steps</h2>
+
+<ol class="list-decimal ml-6 space-y-2">
+<li>Monitor logs khi Codex Desktop gọi compact: <code>tail -f logs/stdout.log | grep compact</code></li>
+<li>Verify không còn 404 errors cho compact requests</li>
+<li>Check model rewrite logs: should see <code>deepseek-v4-pro → gpt-5.5</code></li>
+<li>Confirm context rollover hoạt động bình thường trong Codex Desktop</li>
+</ol>
+
+<div class="bg-yellow-50 border-l-4 border-yellow-500 p-4 mt-6">
+<p class="font-semibold text-yellow-800">⚠️ Lưu ý</p>
+<p class="text-sm text-yellow-700 mt-2">Compact fallback sẽ consume Codex credits (ChatGPT Plus/Pro) thay vì DeepSeek credits. Đây là trade-off cần thiết vì DeepSeek không hỗ trợ /responses/compact endpoint.</p>
+</div>
+
+<div class="mt-8 pt-6 border-t">
+<p class="text-sm text-gray-500">Deployment: 2026-05-28 18:46:32</p>
+<p class="text-sm text-gray-500">Commit: 3cd9fece (includes e0073325 compact fallback)</p>
+<p class="text-sm"><span class="text-green-600 font-bold">Status: PRODUCTION READY ✅</span></p>
+</div>
+</div>
+</body>
+</html>

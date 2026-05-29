@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Root Cause: Compact 404 với DeepSeek</title>
+<script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50 p-8">
+<div class="max-w-4xl mx-auto bg-white rounded-lg shadow-lg p-8">
+<h1 class="text-3xl font-bold text-red-600 mb-6">🔴 Root Cause: Compact 404 với Model DeepSeek</h1>
+
+<div class="bg-red-50 border-l-4 border-red-500 p-4 mb-6">
+<p class="font-semibold text-red-800">Lỗi: <code>Error running remote compact task: unexpected status 404 Not Found</code></p>
+<p class="text-sm text-red-700 mt-2">URL: <code>https://cook.tuanle.dev/v1/responses/compact</code></p>
+</div>
+
+<h2 class="text-2xl font-bold text-gray-800 mb-4">📋 Tóm tắt</h2>
+<p class="mb-4">Model <code>deepseek-v4-pro</code> sử dụng <strong>OpenAI-Compatible executor</strong>, không phải Codex executor. Do đó, upstream fallback sang Codex <strong>KHÔNG được kích hoạt</strong> khi gọi <code>/responses/compact</code>.</p>
+
+<h2 class="text-2xl font-bold text-gray-800 mb-4 mt-8">🔍 Root Cause Chi Tiết</h2>
+
+<div class="space-y-4">
+<div class="bg-blue-50 p-4 rounded">
+<h3 class="font-bold text-blue-900 mb-2">1️⃣ DeepSeek sử dụng OpenAI-Compatible Executor</h3>
+<p class="text-sm text-gray-700">File: <code>openai_compat_executor.go:104-107</code></p>
+<pre class="bg-gray-800 text-green-400 p-3 rounded mt-2 text-xs overflow-x-auto">if opts.Alt == "responses/compact" {
+    to = sdktranslator.FromString("openai-response")
+    endpoint = "/responses/compact"
+}</pre>
+<p class="mt-2 text-sm">OpenAI-Compatible executor <strong>gửi trực tiếp</strong> request tới <code>baseURL + "/responses/compact"</code> của provider (DeepSeek).</p>
+</div>
+
+<div class="bg-yellow-50 p-4 rounded">
+<h3 class="font-bold text-yellow-900 mb-2">2️⃣ DeepSeek Provider KHÔNG hỗ trợ /responses/compact</h3>
+<p class="text-sm text-gray-700">DeepSeek API chỉ hỗ trợ OpenAI-compatible endpoints:</p>
+<ul class="list-disc ml-6 text-sm mt-2">
+<li><code>/chat/completions</code> ✅</li>
+<li><code>/responses/compact</code> ❌ (404 Not Found)</li>
+</ul>
+</div>
+
+<div class="bg-purple-50 p-4 rounded">
+<h3 class="font-bold text-purple-900 mb-2">3️⃣ Codex Fallback CHỈ hoạt động với Codex Executor</h3>
+<p class="text-sm text-gray-700">File: <code>codex_websockets_executor.go:177-179</code></p>
+<pre class="bg-gray-800 text-green-400 p-3 rounded mt-2 text-xs overflow-x-auto">if opts.Alt == "responses/compact" {
+    return e.CodexExecutor.executeCompact(ctx, auth, req, opts)
+}</pre>
+<p class="mt-2 text-sm">Fallback này <strong>CHỈ tồn tại trong CodexWebsocketsExecutor</strong>, không có trong OpenAICompatExecutor.</p>
+</div>
+</div>
+
+<h2 class="text-2xl font-bold text-gray-800 mb-4 mt-8">💡 Giải pháp</h2>
+
+<div class="bg-green-50 border-l-4 border-green-500 p-4">
+<h3 class="font-bold text-green-900 mb-2">Thêm Codex Fallback vào OpenAICompatExecutor</h3>
+<p class="text-sm mb-3">Khi OpenAI-compatible provider trả về 404 cho <code>/responses/compact</code>, tự động fallback sang Codex executor.</p>
+
+<div class="bg-white p-3 rounded border">
+<p class="text-xs font-mono text-gray-600 mb-2">openai_compat_executor.go</p>
+<pre class="bg-gray-800 text-green-400 p-3 rounded text-xs overflow-x-auto">func (e *OpenAICompatExecutor) Execute(...) {
+    // ... existing code ...
+
+    if httpResp.StatusCode == 404 && opts.Alt == "responses/compact" {
+        // Fallback to Codex executor
+        codexExec := NewCodexExecutor(e.cfg)
+        return codexExec.executeCompact(ctx, auth, req, opts)
+    }
+}</pre>
+</div>
+</div>
+
+<h2 class="text-2xl font-bold text-gray-800 mb-4 mt-8">📊 Flow Hiện Tại vs Mong Muốn</h2>
+
+<div class="grid grid-cols-2 gap-4">
+<div class="border rounded p-4">
+<h3 class="font-bold text-red-600 mb-3">❌ Hiện tại (Lỗi)</h3>
+<div class="text-xs space-y-1">
+<div class="bg-gray-100 p-2 rounded">1. Request: deepseek-v4-pro + compact</div>
+<div class="bg-gray-100 p-2 rounded">2. OpenAICompatExecutor</div>
+<div class="bg-gray-100 p-2 rounded">3. POST deepseek.com/responses/compact</div>
+<div class="bg-red-100 p-2 rounded font-bold">4. 404 Not Found ❌</div>
+</div>
+</div>
+
+<div class="border rounded p-4">
+<h3 class="font-bold text-green-600 mb-3">✅ Mong muốn (Fix)</h3>
+<div class="text-xs space-y-1">
+<div class="bg-gray-100 p-2 rounded">1. Request: deepseek-v4-pro + compact</div>
+<div class="bg-gray-100 p-2 rounded">2. OpenAICompatExecutor</div>
+<div class="bg-gray-100 p-2 rounded">3. POST deepseek.com/responses/compact</div>
+<div class="bg-yellow-100 p-2 rounded">4. 404 → Detect & Fallback</div>
+<div class="bg-green-100 p-2 rounded font-bold">5. CodexExecutor.executeCompact() ✅</div>
+</div>
+</div>
+</div>
+
+<h2 class="text-2xl font-bold text-gray-800 mb-4 mt-8">🔧 Files Cần Sửa</h2>
+<ul class="list-disc ml-6 space-y-2">
+<li><code>internal/runtime/executor/openai_compat_executor.go</code> - Thêm 404 fallback logic</li>
+<li><code>internal/runtime/executor/codex_executor.go</code> - Export executeCompact hoặc tạo helper</li>
+</ul>
+
+<div class="mt-8 pt-6 border-t text-sm text-gray-500">
+<p>Báo cáo tạo: 2026-05-28 18:32</p>
+<p>Severity: <span class="text-red-600 font-bold">HIGH</span> - Blocking compact cho tất cả OpenAI-compatible providers không hỗ trợ endpoint này</p>
+</div>
+</div>
+</body>
+</html>

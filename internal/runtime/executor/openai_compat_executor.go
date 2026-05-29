@@ -46,6 +46,12 @@ func NewOpenAICompatExecutor(provider string, cfg *config.Config) *OpenAICompatE
 	return &OpenAICompatExecutor{provider: provider, cfg: cfg}
 }
 
+func openAICompatUseNativeResponsesEndpoint(provider string, opts cliproxyexecutor.Options) bool {
+	return strings.EqualFold(strings.TrimSpace(provider), "copilot") &&
+		opts.Alt != "responses/compact" &&
+		strings.EqualFold(opts.SourceFormat.String(), "openai-response")
+}
+
 // Identifier implements cliproxyauth.ProviderExecutor.
 func (e *OpenAICompatExecutor) Identifier() string { return e.provider }
 
@@ -104,6 +110,9 @@ func (e *OpenAICompatExecutor) Execute(ctx context.Context, auth *cliproxyauth.A
 	if opts.Alt == "responses/compact" {
 		to = sdktranslator.FromString("openai-response")
 		endpoint = "/responses/compact"
+	} else if openAICompatUseNativeResponsesEndpoint(e.provider, opts) {
+		to = sdktranslator.FromString("openai-response")
+		endpoint = "/responses"
 	}
 	originalPayloadSource := req.Payload
 	if len(opts.OriginalRequest) > 0 {
@@ -301,6 +310,12 @@ func (e *OpenAICompatExecutor) ExecuteStream(ctx context.Context, auth *cliproxy
 
 	from := opts.SourceFormat
 	to := sdktranslator.FromString("openai")
+	endpoint := "/chat/completions"
+	useNativeResponses := openAICompatUseNativeResponsesEndpoint(e.provider, opts)
+	if useNativeResponses {
+		to = sdktranslator.FromString("openai-response")
+		endpoint = "/responses"
+	}
 	originalPayloadSource := req.Payload
 	if len(opts.OriginalRequest) > 0 {
 		originalPayloadSource = opts.OriginalRequest
@@ -321,9 +336,11 @@ func (e *OpenAICompatExecutor) ExecuteStream(ctx context.Context, auth *cliproxy
 
 	// Request usage data in the final streaming chunk so that token statistics
 	// are captured even when the upstream is an OpenAI-compatible provider.
-	translated, _ = sjson.SetBytes(translated, "stream_options.include_usage", true)
+	if !useNativeResponses {
+		translated, _ = sjson.SetBytes(translated, "stream_options.include_usage", true)
+	}
 
-	url := strings.TrimSuffix(baseURL, "/") + "/chat/completions"
+	url := strings.TrimSuffix(baseURL, "/") + endpoint
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(translated))
 	if err != nil {
 		return nil, err

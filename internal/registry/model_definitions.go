@@ -224,6 +224,7 @@ func cloneModelInfos(models []*ModelInfo) []*ModelInfo {
 //   - kimi
 //   - antigravity
 //   - xai
+//   - copilot
 //   - kiro
 func GetStaticModelDefinitionsByChannel(channel string) []*ModelInfo {
 	key := strings.ToLower(strings.TrimSpace(channel))
@@ -246,6 +247,8 @@ func GetStaticModelDefinitionsByChannel(channel string) []*ModelInfo {
 		return GetAntigravityModels()
 	case "xai", "x-ai", "grok":
 		return GetXAIModels()
+	case "copilot", "github-copilot", "github":
+		return GetCopilotModels()
 	case "kiro":
 		return GetKiroModels()
 	default:
@@ -271,6 +274,7 @@ func LookupStaticModelInfo(modelID string) *ModelInfo {
 		data.Kimi,
 		data.Antigravity,
 		data.XAI,
+		GetCopilotModels(),
 	}
 	for _, models := range allModels {
 		for _, m := range models {

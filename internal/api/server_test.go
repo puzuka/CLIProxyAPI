@@ -493,8 +493,8 @@ func TestModelsWithClientVersionReturnsCodexCatalog(t *testing.T) {
 	if custom == nil {
 		t.Fatal("expected custom model codex catalog entry")
 	}
-	if got, _ := custom["display_name"].(string); got != "Custom Codex Model" {
-		t.Fatalf("custom display_name = %q, want Custom Codex Model", got)
+	if got, _ := custom["display_name"].(string); got != "Test / Custom Codex Model" {
+		t.Fatalf("custom display_name = %q, want Test / Custom Codex Model", got)
 	}
 	if got, _ := custom["description"].(string); got != "Custom model from registry" {
 		t.Fatalf("custom description = %q, want Custom model from registry", got)
@@ -542,6 +542,27 @@ func TestModelsWithClientVersionReturnsCodexCatalog(t *testing.T) {
 		if !found {
 			t.Fatalf("expected hidden model %s in codex catalog", slug)
 		}
+	}
+}
+
+func TestDecodeHomeModelsPreservesProviderForCodexLabels(t *testing.T) {
+	entries, err := decodeHomeModels([]byte(`{
+		"mixed": [
+			{"id": "z-model", "display_name": "Z Model", "provider": "openai-compatibility"},
+			{"name": "models/a-model", "displayName": "A Model", "owned_by": "xai"}
+		]
+	}`))
+	if err != nil {
+		t.Fatalf("decodeHomeModels() error = %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("entries length = %d, want 2", len(entries))
+	}
+	if entries[0].id != "a-model" || entries[0].provider != "xai" {
+		t.Fatalf("entries[0] = %#v, want id a-model provider xai", entries[0])
+	}
+	if entries[1].id != "z-model" || entries[1].provider != "openai-compatibility" {
+		t.Fatalf("entries[1] = %#v, want id z-model provider openai-compatibility", entries[1])
 	}
 }
 

@@ -35,6 +35,11 @@ func GetKiroModels() []*ModelInfo {
 
 		// --- Claude family (served via CodeWhisperer) ---
 		{
+			ID: "claude-opus-4-8", Object: "model", Created: 1732752000, OwnedBy: "aws", Type: "kiro",
+			DisplayName: "Kiro Claude Opus 4.8", Description: "Experimental preview of Claude Opus 4.8 model with 1M context window (2.2x credit)",
+			ContextLength: 1000000, MaxCompletionTokens: 128000, Thinking: thinking(128000),
+		},
+		{
 			ID: "claude-opus-4-7", Object: "model", Created: 1732752000, OwnedBy: "aws", Type: "kiro",
 			DisplayName: "Kiro Claude Opus 4.7", Description: "Experimental preview of Claude Opus 4.7 model with 1M context window (2.2x credit)",
 			ContextLength: 1000000, MaxCompletionTokens: 128000, Thinking: thinking(128000),

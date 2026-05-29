@@ -81,6 +81,12 @@ const (
 	refreshIneffectiveBackoff = 30 * time.Second
 	quotaBackoffBase          = time.Second
 	quotaBackoffMax           = 30 * time.Minute
+	// transientUpstreamBackoff is how long an auth is sidelined after a transient
+	// gateway error (408/500/502/503/504). These are upstream blips, not auth
+	// faults, and executors already retry them internally; a long blackout would
+	// turn one blip into a burst of auth_unavailable (502) errors under parallel
+	// agentic load (e.g. Codex tool-calling), so keep it short.
+	transientUpstreamBackoff = 5 * time.Second
 )
 
 var quotaCooldownDisabled atomic.Bool
@@ -2373,7 +2379,7 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 							if disableCooling {
 								state.NextRetryAfter = time.Time{}
 							} else {
-								next := now.Add(1 * time.Minute)
+								next := now.Add(transientUpstreamBackoff)
 								state.NextRetryAfter = next
 							}
 						default:
@@ -2826,7 +2832,7 @@ func applyAuthFailureState(auth *Auth, resultErr *Error, retryAfter *time.Durati
 		if disableCooling {
 			auth.NextRetryAfter = time.Time{}
 		} else {
-			auth.NextRetryAfter = now.Add(1 * time.Minute)
+			auth.NextRetryAfter = now.Add(transientUpstreamBackoff)
 		}
 	default:
 		if auth.StatusMessage == "" {

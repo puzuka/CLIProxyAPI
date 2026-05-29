@@ -56,6 +56,31 @@ func TestGetModelsForClientReturnsClones(t *testing.T) {
 	}
 }
 
+func TestGetCallableModelsForClientExcludesNonQuotaSuspensions(t *testing.T) {
+	r := newTestModelRegistry()
+	r.RegisterClient("client-1", "copilot", []*ModelInfo{{ID: "callable"}, {ID: "unsupported"}, {ID: "quota"}})
+
+	r.SuspendClientModel("client-1", "unsupported", "model_not_supported")
+	r.SuspendClientModel("client-1", "quota", "quota")
+
+	raw := r.GetModelsForClient("client-1")
+	if len(raw) != 3 {
+		t.Fatalf("raw models = %d, want 3", len(raw))
+	}
+
+	callable := r.GetCallableModelsForClient("client-1")
+	got := make(map[string]bool, len(callable))
+	for _, model := range callable {
+		got[model.ID] = true
+	}
+	if got["unsupported"] {
+		t.Fatalf("unsupported model should be hidden from callable list")
+	}
+	if !got["callable"] || !got["quota"] {
+		t.Fatalf("callable list = %#v, want callable and quota models", got)
+	}
+}
+
 func TestGetAvailableModelsByProviderReturnsClones(t *testing.T) {
 	r := newTestModelRegistry()
 	r.RegisterClient("client-1", "gemini", []*ModelInfo{{
