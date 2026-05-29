@@ -258,6 +258,9 @@ func (s *FileTokenStore) readAuthFile(path, baseDir string) (*cliproxyauth.Auth,
 	if email, ok := metadata["email"].(string); ok && email != "" {
 		auth.Attributes["email"] = email
 	}
+	if provider == "copilot" {
+		hydrateCopilotRuntimeAttributes(auth, metadata)
+	}
 	cliproxyauth.ApplyCustomHeadersFromMetadata(auth)
 	return auth, nil
 }
@@ -317,8 +320,49 @@ func (s *FileTokenStore) labelFor(metadata map[string]any) string {
 	if v, ok := metadata["email"].(string); ok && v != "" {
 		return v
 	}
+	if v, ok := metadata["github_login"].(string); ok && v != "" {
+		return v
+	}
 	if project, ok := metadata["project_id"].(string); ok && project != "" {
 		return project
+	}
+	return ""
+}
+
+func hydrateCopilotRuntimeAttributes(auth *cliproxyauth.Auth, metadata map[string]any) {
+	if auth == nil {
+		return
+	}
+	if auth.Attributes == nil {
+		auth.Attributes = make(map[string]string)
+	}
+	auth.Attributes["auth_kind"] = "oauth"
+	if token := firstMetadataString(metadata, "access_token", "copilot_token"); token != "" {
+		auth.Attributes["api_key"] = token
+	}
+	baseURL := firstMetadataString(metadata, "copilot_api_endpoint", "base_url")
+	if baseURL == "" {
+		baseURL = "https://api.individual.githubcopilot.com"
+	}
+	auth.Attributes["base_url"] = baseURL
+	if login := firstMetadataString(metadata, "github_login"); login != "" {
+		auth.Attributes["github_login"] = login
+	}
+	if email := firstMetadataString(metadata, "email"); email != "" {
+		auth.Attributes["email"] = email
+	}
+}
+
+func firstMetadataString(metadata map[string]any, keys ...string) string {
+	if len(metadata) == 0 {
+		return ""
+	}
+	for _, key := range keys {
+		if v, ok := metadata[key].(string); ok {
+			if trimmed := strings.TrimSpace(v); trimmed != "" {
+				return trimmed
+			}
+		}
 	}
 	return ""
 }

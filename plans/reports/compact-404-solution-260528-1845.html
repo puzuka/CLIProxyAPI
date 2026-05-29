@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Solution: Enable Compact Fallback</title>
+<script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50 p-8">
+<div class="max-w-4xl mx-auto bg-white rounded-lg shadow-lg p-8">
+<h1 class="text-3xl font-bold text-green-600 mb-6">✅ Solution: Enable Compact Fallback Config</h1>
+
+<div class="bg-blue-50 border-l-4 border-blue-500 p-4 mb-6">
+<p class="font-semibold text-blue-800">Commit e0073325 đã implement compact fallback nhưng chưa được enable trong config!</p>
+</div>
+
+<h2 class="text-2xl font-bold text-gray-800 mb-4">📋 Tình trạng hiện tại</h2>
+
+<div class="grid grid-cols-2 gap-4 mb-6">
+<div class="bg-green-50 p-4 rounded border border-green-200">
+<h3 class="font-bold text-green-800 mb-2">✅ Code đã có</h3>
+<ul class="text-sm space-y-1">
+<li>• <code>CompactFallbackConfig</code> struct</li>
+<li>• <code>applyCompactModelFallback()</code> function</li>
+<li>• Logic rewrite model → Codex</li>
+<li>• Strip reasoning items</li>
+<li>• Tests coverage</li>
+</ul>
+</div>
+
+<div class="bg-red-50 p-4 rounded border border-red-200">
+<h3 class="font-bold text-red-800 mb-2">❌ Config chưa enable</h3>
+<ul class="text-sm space-y-1">
+<li>• <code>config.yaml</code> không có compact-fallback</li>
+<li>• Feature mặc định disabled</li>
+<li>• DeepSeek vẫn gọi trực tiếp → 404</li>
+</ul>
+</div>
+</div>
+
+<h2 class="text-2xl font-bold text-gray-800 mb-4">🔧 Giải pháp: Thêm Config</h2>
+
+<div class="bg-gray-800 text-green-400 p-4 rounded mb-6">
+<p class="text-xs text-gray-400 mb-2">config.yaml</p>
+<pre class="text-sm">compact-fallback:
+  enabled: true
+  model: "gpt-5.5"  # hoặc bất kỳ Codex model nào có auth
+  applies-to-providers:
+    - "openai-compatibility"  # hoặc "*" để apply cho tất cả non-Codex providers</pre>
+</div>
+
+<h2 class="text-2xl font-bold text-gray-800 mb-4">📖 Cách hoạt động</h2>
+
+<div class="space-y-3 text-sm">
+<div class="flex items-start gap-3">
+<span class="bg-blue-500 text-white rounded-full w-6 h-6 flex items-center justify-center flex-shrink-0">1</span>
+<div>
+<p class="font-semibold">Request đến: <code>POST /v1/responses/compact</code></p>
+<p class="text-gray-600">Model: <code>deepseek-v4-pro</code> (OpenAI-compatible provider)</p>
+</div>
+</div>
+
+<div class="flex items-start gap-3">
+<span class="bg-blue-500 text-white rounded-full w-6 h-6 flex items-center justify-center flex-shrink-0">2</span>
+<div>
+<p class="font-semibold">Check fallback config</p>
+<p class="text-gray-600">Enabled? ✅ | Provider matches? ✅ | Codex auth available? ✅</p>
+</div>
+</div>
+
+<div class="flex items-start gap-3">
+<span class="bg-blue-500 text-white rounded-full w-6 h-6 flex items-center justify-center flex-shrink-0">3</span>
+<div>
+<p class="font-semibold">Rewrite payload</p>
+<p class="text-gray-600">Model: <code>deepseek-v4-pro</code> → <code>gpt-5.5</code></p>
+<p class="text-gray-600">Strip reasoning items (encrypted_content không valid cho Codex)</p>
+</div>
+</div>
+
+<div class="flex items-start gap-3">
+<span class="bg-green-500 text-white rounded-full w-6 h-6 flex items-center justify-center flex-shrink-0">4</span>
+<div>
+<p class="font-semibold">Route qua CodexExecutor</p>
+<p class="text-gray-600">POST <code>chatgpt.com/backend-api/codex/responses/compact</code></p>
+<p class="text-green-600 font-semibold">✅ 200 OK</p>
+</div>
+</div>
+</div>
+
+<h2 class="text-2xl font-bold text-gray-800 mb-4 mt-8">⚙️ Config Options</h2>
+
+<table class="w-full text-sm border">
+<thead class="bg-gray-100">
+<tr>
+<th class="border p-2 text-left">Field</th>
+<th class="border p-2 text-left">Type</th>
+<th class="border p-2 text-left">Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="border p-2"><code>enabled</code></td>
+<td class="border p-2">bool</td>
+<td class="border p-2">Enable/disable fallback (default: false)</td>
+</tr>
+<tr>
+<td class="border p-2"><code>model</code></td>
+<td class="border p-2">string</td>
+<td class="border p-2">Codex model để fallback (e.g. "gpt-5.5")</td>
+</tr>
+<tr>
+<td class="border p-2"><code>applies-to-providers</code></td>
+<td class="border p-2">[]string</td>
+<td class="border p-2">Whitelist providers. "*" hoặc [] = all non-Codex</td>
+</tr>
+</tbody>
+</table>
+
+<h2 class="text-2xl font-bold text-gray-800 mb-4 mt-8">🎯 Next Steps</h2>
+
+<ol class="list-decimal ml-6 space-y-2">
+<li>Thêm config <code>compact-fallback</code> vào <code>config.yaml</code></li>
+<li>Restart server: <code>go run ./cmd/server</code></li>
+<li>Test với DeepSeek: <code>POST /v1/responses/compact</code></li>
+<li>Verify logs: should see model rewrite deepseek → gpt-5.5</li>
+<li>Confirm 200 response thay vì 404</li>
+</ol>
+
+<div class="mt-8 pt-6 border-t">
+<p class="text-sm text-gray-500">Báo cáo: 2026-05-28 18:45</p>
+<p class="text-sm text-gray-500">Commit: <code>e0073325</code> (feat: compact fallback)</p>
+<p class="text-sm"><span class="text-green-600 font-bold">Status: READY TO ENABLE</span></p>
+</div>
+</div>
+</body>
+</html>

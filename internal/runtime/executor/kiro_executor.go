@@ -24,13 +24,13 @@ import (
 	kiroauth "github.com/router-for-me/CLIProxyAPI/v7/internal/auth/kiro"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor/helps"
 	kiroclaude "github.com/router-for-me/CLIProxyAPI/v7/internal/translator/kiro/claude"
 	kirocommon "github.com/router-for-me/CLIProxyAPI/v7/internal/translator/kiro/common"
 	kiroopenai "github.com/router-for-me/CLIProxyAPI/v7/internal/translator/kiro/openai"
 	openairesponses "github.com/router-for-me/CLIProxyAPI/v7/internal/translator/openai/openai/responses"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/util"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/runtime/executor/helps"
 	cliproxyexecutor "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/executor"
 	"github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/usage"
 	sdktranslator "github.com/router-for-me/CLIProxyAPI/v7/sdk/translator"
@@ -107,27 +107,43 @@ func enqueueTranslatedSSE(out chan<- cliproxyexecutor.StreamChunk, chunk []byte)
 // close the underlying body, which unblocks the in-flight Read with an error so
 // streamToChannel can finalize the stream. The timer is reset on every Read so
 // healthy-but-slow streams (which emit reasoning/metering events periodically)
-// are never cut short.
+// are never cut short. When firstToken > 0 the first byte uses that (typically
+// shorter) budget; subsequent reads use idle.
 type idleTimeoutReader struct {
-	r     io.ReadCloser
-	idle  time.Duration
-	timer *time.Timer
+	r          io.ReadCloser
+	idle       time.Duration
+	firstToken time.Duration
+	timer      *time.Timer
+	gotFirst   bool
 }
 
-func newIdleTimeoutReader(r io.ReadCloser, idle time.Duration) *idleTimeoutReader {
+func newIdleTimeoutReader(r io.ReadCloser, idle, firstToken time.Duration) *idleTimeoutReader {
+	first := idle
+	if firstToken > 0 {
+		first = firstToken
+	}
 	return &idleTimeoutReader{
-		r:    r,
-		idle: idle,
-		timer: time.AfterFunc(idle, func() {
-			log.Warnf("kiro: stream idle for %v, closing upstream connection", idle)
+		r:          r,
+		idle:       idle,
+		firstToken: firstToken,
+		timer: time.AfterFunc(first, func() {
+			log.Warnf("kiro: stream idle for %v, closing upstream connection", first)
 			_ = r.Close()
 		}),
 	}
 }
 
 func (x *idleTimeoutReader) Read(p []byte) (int, error) {
-	x.timer.Reset(x.idle)
-	return x.r.Read(p)
+	d := x.idle
+	if !x.gotFirst && x.firstToken > 0 {
+		d = x.firstToken
+	}
+	x.timer.Reset(d)
+	n, err := x.r.Read(p)
+	if n > 0 {
+		x.gotFirst = true
+	}
+	return n, err
 }
 
 func (x *idleTimeoutReader) stop() { x.timer.Stop() }
@@ -533,6 +549,26 @@ func buildKiroPayloadForFormat(body []byte, modelID, profileArn, origin string, 
 // NewKiroExecutor creates a new Kiro executor instance.
 func NewKiroExecutor(cfg *config.Config) *KiroExecutor {
 	return &KiroExecutor{cfg: cfg}
+}
+
+// streamingReadTimeout returns the idle read timeout for streaming responses,
+// preferring config (kiro-streaming-read-timeout) and falling back to the
+// kiroStreamingReadTimeout default.
+func (e *KiroExecutor) streamingReadTimeout() time.Duration {
+	if e.cfg != nil && e.cfg.KiroStreamingReadTimeout > 0 {
+		return time.Duration(e.cfg.KiroStreamingReadTimeout) * time.Second
+	}
+	return kiroStreamingReadTimeout
+}
+
+// firstTokenTimeout returns the first-byte timeout for streaming responses from
+// config (kiro-first-token-timeout). 0 disables it (falls back to the idle
+// read timeout), which is the safe default for slow "thinking" models.
+func (e *KiroExecutor) firstTokenTimeout() time.Duration {
+	if e.cfg != nil && e.cfg.KiroFirstTokenTimeout > 0 {
+		return time.Duration(e.cfg.KiroFirstTokenTimeout) * time.Second
+	}
+	return 0
 }
 
 // Identifier returns the unique identifier for this executor.
@@ -1480,7 +1516,7 @@ func (e *KiroExecutor) executeStreamWithRetry(ctx context.Context, auth *cliprox
 
 				// Guard against upstream stalls: if no bytes arrive within
 				// kiroStreamingReadTimeout, close the body to unblock the read.
-				idleReader := newIdleTimeoutReader(resp.Body, kiroStreamingReadTimeout)
+				idleReader := newIdleTimeoutReader(resp.Body, e.streamingReadTimeout(), e.firstTokenTimeout())
 				defer idleReader.stop()
 
 				e.streamToChannel(ctx, idleReader, out, from, helps.PayloadRequestedModel(opts, req.Model), opts.OriginalRequest, body, reporter, thinkingEnabled)
@@ -1806,6 +1842,14 @@ func (e *KiroExecutor) mapModelToKiro(model string) string {
 
 	// Check for Opus variants
 	if strings.Contains(modelLower, "opus") {
+		if strings.Contains(modelLower, "4-8") || strings.Contains(modelLower, "4.8") {
+			log.Debugf("kiro: unknown Opus 4.8 model '%s', mapping to claude-opus-4.8", model)
+			return "claude-opus-4.8"
+		}
+		if strings.Contains(modelLower, "4-7") || strings.Contains(modelLower, "4.7") {
+			log.Debugf("kiro: unknown Opus 4.7 model '%s', mapping to claude-opus-4.7", model)
+			return "claude-opus-4.7"
+		}
 		if strings.Contains(modelLower, "4-6") || strings.Contains(modelLower, "4.6") {
 			log.Debugf("kiro: unknown Opus 4.6 model '%s', mapping to claude-opus-4.6", model)
 			return "claude-opus-4.6"
@@ -3001,7 +3045,11 @@ func (e *KiroExecutor) streamToChannel(ctx context.Context, body io.Reader, out 
 				}
 
 				if hasOfficialReasoningEvent {
-					processText := strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(contentDelta, kirocommon.ThinkingStartTag, ""), kirocommon.ThinkingEndTag, ""))
+					// Strip any leaked thinking tags but DO NOT trim spaces: each
+					// content delta is a stream fragment, and trimming per-delta
+					// drops the boundary/inter-token spaces, gluing words together
+					// (e.g. "means verifying" -> "meansverifying"). Emit verbatim.
+					processText := strings.ReplaceAll(strings.ReplaceAll(contentDelta, kirocommon.ThinkingStartTag, ""), kirocommon.ThinkingEndTag, "")
 					if processText != "" {
 						if !isTextBlockOpen {
 							contentBlockIndex++

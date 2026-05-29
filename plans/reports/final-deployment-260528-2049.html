@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Final Deployment: Kiro Fixes + Compact Fallback</title>
+<script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-50 p-8">
+<div class="max-w-4xl mx-auto bg-white rounded-lg shadow-lg p-8">
+<h1 class="text-3xl font-bold text-green-600 mb-6">✅ Final Deployment Complete</h1>
+
+<div class="bg-green-50 border-l-4 border-green-500 p-4 mb-6">
+<p class="font-semibold text-green-800">Production server updated với 8 Kiro fixes + Compact Fallback enabled</p>
+<p class="text-sm text-green-700 mt-2">Version: v7.1.20-41-g8693715b | Deployed: 2026-05-28 20:48:59</p>
+</div>
+
+<h2 class="text-2xl font-bold text-gray-800 mb-4">📦 Deployment Summary</h2>
+
+<div class="grid grid-cols-2 gap-4 mb-6">
+<div class="bg-blue-50 p-4 rounded">
+<h3 class="font-bold text-blue-800 mb-2">Service Status</h3>
+<ul class="text-sm space-y-1">
+<li>• PID: <code>74831</code></li>
+<li>• Started: 20:48:59</li>
+<li>• Memory: ~80 MB</li>
+<li>• Models: 102 available</li>
+<li>• Clients: 60 loaded</li>
+</ul>
+</div>
+
+<div class="bg-purple-50 p-4 rounded">
+<h3 class="font-bold text-purple-800 mb-2">Version Info</h3>
+<ul class="text-sm space-y-1">
+<li>• Commit: <code>8693715b</code></li>
+<li>• Tag: v7.1.20-41</li>
+<li>• Branch: main</li>
+<li>• Compact fallback: ✅ Enabled</li>
+</ul>
+</div>
+</div>
+
+<h2 class="text-2xl font-bold text-gray-800 mb-4">🆕 New Commits (8)</h2>
+
+<div class="space-y-2 text-sm mb-6">
+<div class="bg-gray-50 p-3 rounded border-l-4 border-blue-500">
+<p class="font-mono text-xs text-gray-600">8693715b</p>
+<p class="font-semibold">feat(kiro): scale max_thinking_length by reasoning_effort + log it</p>
+</div>
+
+<div class="bg-gray-50 p-3 rounded border-l-4 border-green-500">
+<p class="font-mono text-xs text-gray-600">5cbdc759</p>
+<p class="font-semibold">fix(kiro): preserve tool_call arguments in stream when blocks > tools</p>
+</div>
+
+<div class="bg-gray-50 p-3 rounded border-l-4 border-green-500">
+<p class="font-mono text-xs text-gray-600">15447a49</p>
+<p class="font-semibold">fix(kiro): make /v1/responses request translator a no-op to stop double-convert</p>
+</div>
+
+<div class="bg-gray-50 p-3 rounded border-l-4 border-green-500">
+<p class="font-mono text-xs text-gray-600">493af506</p>
+<p class="font-semibold">fix(kiro): derive stable conversationId so multi-turn chats keep context</p>
+</div>
+
+<div class="bg-gray-50 p-3 rounded border-l-4 border-green-500">
+<p class="font-mono text-xs text-gray-600">95b49703</p>
+<p class="font-semibold">fix(kiro): synthesise [DONE] in chain so Responses framer emits response.completed</p>
+</div>
+
+<div class="bg-gray-50 p-3 rounded border-l-4 border-green-500">
+<p class="font-mono text-xs text-gray-600">6ec5449c</p>
+<p class="font-semibold">fix(kiro): isolate per-stage stream state in OpenaiResponse↔Kiro chain</p>
+</div>
+
+<div class="bg-gray-50 p-3 rounded border-l-4 border-green-500">
+<p class="font-mono text-xs text-gray-600">8dab9fe9</p>
+<p class="font-semibold">fix(kiro): route /v1/responses payloads through OpenAI Responses converter</p>
+</div>
+
+<div class="bg-gray-50 p-3 rounded border-l-4 border-green-500">
+<p class="font-mono text-xs text-gray-600">5c2c0ba2</p>
+<p class="font-semibold">fix(kiro): sanitize tool input_schema before sending to CodeWhisperer</p>
+</div>
+</div>
+
+<h2 class="text-2xl font-bold text-gray-800 mb-4">📊 Changes Overview</h2>
+
+<table class="w-full text-sm border mb-6">
+<thead class="bg-gray-100">
+<tr>
+<th class="border p-2 text-left">Category</th>
+<th class="border p-2 text-left">Files Changed</th>
+<th class="border p-2 text-left">Impact</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td class="border p-2">Kiro Translator</td>
+<td class="border p-2">7 files</td>
+<td class="border p-2">Multi-turn context, tool calls, stream fixes</td>
+</tr>
+<tr>
+<td class="border p-2">Compact Tests</td>
+<td class="border p-2">1 file (+152 lines)</td>
+<td class="border p-2">Enhanced test coverage</td>
+</tr>
+<tr>
+<td class="border p-2">Usage Portal</td>
+<td class="border p-2">3 files (+183 lines)</td>
+<td class="border p-2">Reasoning effort tracking</td>
+</tr>
+<tr>
+<td class="border p-2">New Files</td>
+<td class="border p-2">2 files (+341 lines)</td>
+<td class="border p-2">conversation_id.go, schema_sanitizer.go</td>
+</tr>
+</tbody>
+</table>
+
+<h2 class="text-2xl font-bold text-gray-800 mb-4">✅ Verification</h2>
+
+<div class="grid grid-cols-3 gap-3 mb-6">
+<div class="bg-green-50 p-3 rounded text-center">
+<p class="text-2xl font-bold text-green-600">✓</p>
+<p class="text-xs text-gray-600">Service Running</p>
+</div>
+<div class="bg-green-50 p-3 rounded text-center">
+<p class="text-2xl font-bold text-green-600">✓</p>
+<p class="text-xs text-gray-600">Config Loaded</p>
+</div>
+<div class="bg-green-50 p-3 rounded text-center">
+<p class="text-2xl font-bold text-green-600">✓</p>
+<p class="text-xs text-gray-600">102 Models</p>
+</div>
+<div class="bg-green-50 p-3 rounded text-center">
+<p class="text-2xl font-bold text-green-600">✓</p>
+<p class="text-xs text-gray-600">Compact Fallback</p>
+</div>
+<div class="bg-green-50 p-3 rounded text-center">
+<p class="text-2xl font-bold text-green-600">✓</p>
+<p class="text-xs text-gray-600">Kiro Fixes</p>
+</div>
+<div class="bg-green-50 p-3 rounded text-center">
+<p class="text-2xl font-bold text-green-600">✓</p>
+<p class="text-xs text-gray-600">60 Clients</p>
+</div>
+</div>
+
+<h2 class="text-2xl font-bold text-gray-800 mb-4">🎯 Key Features</h2>
+
+<div class="space-y-3">
+<div class="bg-blue-50 p-4 rounded">
+<h3 class="font-bold text-blue-900 mb-2">1. Compact Fallback (DeepSeek → Codex)</h3>
+<p class="text-sm text-gray-700">Khi OpenAI-compatible providers (DeepSeek, etc.) không hỗ trợ <code>/responses/compact</code>, tự động fallback sang Codex (gpt-5.5) để xử lý context rollover.</p>
+</div>
+
+<div class="bg-purple-50 p-4 rounded">
+<h3 class="font-bold text-purple-900 mb-2">2. Kiro Multi-turn Context</h3>
+<p class="text-sm text-gray-700">Stable conversationId generation để maintain context qua nhiều turns trong Kiro provider.</p>
+</div>
+
+<div class="bg-green-50 p-4 rounded">
+<h3 class="font-bold text-green-900 mb-2">3. Tool Call Preservation</h3>
+<p class="text-sm text-gray-700">Fix stream handling khi tool_call blocks nhiều hơn tools array.</p>
+</div>
+
+<div class="bg-yellow-50 p-4 rounded">
+<h3 class="font-bold text-yellow-900 mb-2">4. Reasoning Effort Tracking</h3>
+<p class="text-sm text-gray-700">Scale max_thinking_length theo reasoning_effort + log để monitor usage.</p>
+</div>
+</div>
+
+<h2 class="text-2xl font-bold text-gray-800 mb-4 mt-8">📝 Monitoring</h2>
+
+<div class="bg-gray-50 p-4 rounded">
+<p class="font-semibold mb-2">Commands:</p>
+<pre class="text-xs bg-gray-800 text-green-400 p-3 rounded">
+# Watch logs
+tail -f logs/stdout.log
+
+# Check compact fallback
+tail -f logs/stdout.log | grep -i "compact\|fallback"
+
+# Monitor Kiro requests
+tail -f logs/stdout.log | grep -i "kiro"
+
+# Service status
+ps aux | grep cli-proxy-api | grep -v grep
+</pre>
+</div>
+
+<div class="mt-8 pt-6 border-t">
+<p class="text-sm text-gray-500">Deployment: 2026-05-28 20:48:59</p>
+<p class="text-sm text-gray-500">Version: v7.1.20-41-g8693715b</p>
+<p class="text-sm text-gray-500">Commits: 3cd9fece → 8693715b (8 new)</p>
+<p class="text-sm"><span class="text-green-600 font-bold">Status: PRODUCTION LIVE ✅</span></p>
+</div>
+</div>
+</body>
+</html>

@@ -210,3 +210,43 @@ func TestAuthByIndexDistinguishesSharedAPIKeysAcrossProviders(t *testing.T) {
 		t.Fatalf("authByIndex(compat) returned %q, want %q", gotCompat.ID, compatAuth.ID)
 	}
 }
+
+func TestResolveTokenPlaceholderUsesProviderSpecificTokens(t *testing.T) {
+	t.Parallel()
+
+	h := &Handler{}
+	auth := &coreauth.Auth{
+		Provider: "copilot",
+		Attributes: map[string]string{
+			"api_key": "copilot-attr-token",
+		},
+		Metadata: map[string]any{
+			"access_token":        "copilot-access-token",
+			"copilot_token":       "copilot-metadata-token",
+			"github_access_token": "github-oauth-token",
+		},
+	}
+
+	cases := []struct {
+		placeholder string
+		want        string
+	}{
+		{placeholder: "$TOKEN$", want: "copilot-access-token"},
+		{placeholder: "$COPILOT_TOKEN$", want: "copilot-metadata-token"},
+		{placeholder: "$GITHUB_TOKEN$", want: "github-oauth-token"},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.placeholder, func(t *testing.T) {
+			t.Parallel()
+			got, err := h.resolveTokenPlaceholder(context.Background(), auth, tc.placeholder)
+			if err != nil {
+				t.Fatalf("resolveTokenPlaceholder returned error: %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("resolveTokenPlaceholder(%q) = %q, want %q", tc.placeholder, got, tc.want)
+			}
+		})
+	}
+}

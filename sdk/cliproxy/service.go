@@ -117,6 +117,7 @@ func newDefaultAuthManager() *sdkAuth.Manager {
 		sdkAuth.NewCodexAuthenticator(),
 		sdkAuth.NewClaudeAuthenticator(),
 		sdkAuth.NewXAIAuthenticator(),
+		sdkAuth.NewCopilotAuthenticator(),
 	)
 }
 
@@ -436,6 +437,8 @@ func (s *Service) ensureExecutorsForAuthWithMode(a *coreauth.Auth, forceReplace 
 		s.coreManager.RegisterExecutor(executor.NewKimiExecutor(s.cfg))
 	case "xai":
 		s.coreManager.RegisterExecutor(executor.NewXAIExecutor(s.cfg))
+	case "copilot":
+		s.coreManager.RegisterExecutor(executor.NewCopilotExecutor(s.cfg))
 	case "kiro":
 		s.coreManager.RegisterExecutor(executor.NewKiroExecutor(s.cfg))
 	default:
@@ -594,6 +597,7 @@ func (s *Service) registerHomeExecutors() {
 	s.coreManager.RegisterExecutor(executor.NewAIStudioExecutor(s.cfg, "", s.wsGateway))
 	s.coreManager.RegisterExecutor(executor.NewAntigravityExecutor(s.cfg))
 	s.coreManager.RegisterExecutor(executor.NewKimiExecutor(s.cfg))
+	s.coreManager.RegisterExecutor(executor.NewCopilotExecutor(s.cfg))
 	s.coreManager.RegisterExecutor(executor.NewKiroExecutor(s.cfg))
 	s.coreManager.RegisterExecutor(executor.NewOpenAICompatExecutor("openai-compatibility", s.cfg))
 }
@@ -1165,6 +1169,13 @@ func (s *Service) registerModelsForAuth(a *coreauth.Auth) {
 	case "xai":
 		models = registry.GetXAIModels()
 		models = applyExcludedModels(models, excluded)
+	case "copilot":
+		models = registry.GetCopilotModels()
+		models = applyExcludedModels(models, excluded)
+		// Asynchronously fetch the live Copilot /models catalog and re-register
+		// the merged result so newly-released models surface in /v1/models. The
+		// static list above keeps the registry populated if the call fails.
+		s.refreshCopilotDynamicModels(a, excluded)
 	case "kiro":
 		models = registry.GetKiroModels()
 		models = applyExcludedModels(models, excluded)

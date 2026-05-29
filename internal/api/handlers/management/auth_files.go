@@ -25,6 +25,7 @@ import (
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/auth/antigravity"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/auth/claude"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/auth/codex"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/auth/copilot"
 	geminiAuth "github.com/router-for-me/CLIProxyAPI/v7/internal/auth/gemini"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/auth/kimi"
 	xaiauth "github.com/router-for-me/CLIProxyAPI/v7/internal/auth/xai"
@@ -1966,6 +1967,84 @@ func (h *Handler) RequestCodexToken(c *gin.Context) {
 	}()
 
 	c.JSON(200, gin.H{"status": "ok", "url": authURL, "state": state})
+}
+
+func (h *Handler) RequestCopilotToken(c *gin.Context) {
+	ctx := context.Background()
+	ctx = PopulateAuthContext(ctx, c)
+
+	fmt.Println("Initializing GitHub Copilot authentication...")
+
+	state, errState := misc.GenerateRandomState()
+	if errState != nil {
+		log.Errorf("Failed to generate state parameter: %v", errState)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to generate state parameter"})
+		return
+	}
+
+	authSvc := copilot.NewCopilotAuth(h.cfg)
+	deviceFlow, errDevice := authSvc.RequestDeviceCode(ctx)
+	if errDevice != nil {
+		log.Errorf("Failed to start GitHub Copilot device flow: %v", errDevice)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to start device flow"})
+		return
+	}
+
+	authURL := strings.TrimSpace(deviceFlow.VerificationURIComplete)
+	if authURL == "" {
+		authURL = strings.TrimSpace(deviceFlow.VerificationURI)
+	}
+
+	RegisterOAuthSession(state, "copilot")
+
+	go func() {
+		waitCtx := ctx
+		var cancel context.CancelFunc
+		if deviceFlow.ExpiresIn > 0 {
+			waitCtx, cancel = context.WithTimeout(ctx, time.Duration(deviceFlow.ExpiresIn)*time.Second)
+		}
+		if cancel != nil {
+			defer cancel()
+		}
+
+		fmt.Println("Waiting for GitHub Copilot authentication...")
+		bundle, errWait := authSvc.WaitForAuthorization(waitCtx, deviceFlow)
+		if errWait != nil {
+			SetOAuthSessionError(state, oauthSessionErrorWithCause("Authentication failed", errWait))
+			log.Errorf("GitHub Copilot authentication failed: %v", errWait)
+			return
+		}
+
+		record, errRecord := sdkAuth.BuildCopilotAuthRecord(bundle)
+		if errRecord != nil {
+			SetOAuthSessionError(state, "Failed to create authentication record")
+			log.Errorf("Failed to create GitHub Copilot auth record: %v", errRecord)
+			return
+		}
+
+		savedPath, errSave := h.saveTokenRecord(ctx, record)
+		if errSave != nil {
+			log.Errorf("Failed to save authentication tokens: %v", errSave)
+			SetOAuthSessionError(state, "Failed to save authentication tokens")
+			return
+		}
+
+		fmt.Printf("Authentication successful! Token saved to %s\n", savedPath)
+		fmt.Println("You can now use GitHub Copilot services through this CLI")
+		CompleteOAuthSession(state)
+		CompleteOAuthSessionsByProvider("copilot")
+	}()
+
+	c.JSON(200, gin.H{
+		"status":                    "ok",
+		"url":                       authURL,
+		"state":                     state,
+		"user_code":                 deviceFlow.UserCode,
+		"verification_uri":          deviceFlow.VerificationURI,
+		"verification_uri_complete": deviceFlow.VerificationURIComplete,
+		"expires_in":                deviceFlow.ExpiresIn,
+		"interval":                  deviceFlow.Interval,
+	})
 }
 
 func (h *Handler) RequestAntigravityToken(c *gin.Context) {

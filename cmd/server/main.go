@@ -70,6 +70,7 @@ func main() {
 	var antigravityLogin bool
 	var kimiLogin bool
 	var xaiLogin bool
+	var copilotLogin bool
 	var kiroLogin bool
 	var kiroAWSLogin bool
 	var kiroAWSAuthCodeLogin bool
@@ -99,6 +100,7 @@ func main() {
 	flag.BoolVar(&antigravityLogin, "antigravity-login", false, "Login to Antigravity using OAuth")
 	flag.BoolVar(&kimiLogin, "kimi-login", false, "Login to Kimi using OAuth")
 	flag.BoolVar(&xaiLogin, "xai-login", false, "Login to xAI using OAuth")
+	flag.BoolVar(&copilotLogin, "copilot-login", false, "Login to GitHub Copilot using OAuth device flow")
 	flag.BoolVar(&kiroLogin, "kiro-login", false, "Login to Kiro (Amazon Q / CodeWhisperer) via Google OAuth (default)")
 	flag.BoolVar(&kiroAWSLogin, "kiro-aws-login", false, "Login to Kiro using AWS Builder ID device-code flow")
 	flag.BoolVar(&kiroAWSAuthCodeLogin, "kiro-aws-authcode-login", false, "Login to Kiro using AWS Builder ID authorization-code flow (browser callback)")
@@ -643,6 +645,8 @@ func main() {
 		cmd.DoKimiLogin(cfg, options)
 	} else if xaiLogin {
 		cmd.DoXAILogin(cfg, options)
+	} else if copilotLogin {
+		cmd.DoCopilotLogin(cfg, options)
 	} else if kiroLogin {
 		// Default Kiro login: Google OAuth via kiro:// protocol callback.
 		cmd.DoKiroLogin(cfg, options)

@@ -241,6 +241,7 @@ func canonicalKiroRouteInfo(modelID string) KiroRouteInfo {
 
 	baseCanonical := strings.TrimSuffix(canonicalID, "-agentic")
 	upstreamBase := strings.TrimPrefix(baseCanonical, "kiro-")
+	upstreamBase = strings.ReplaceAll(upstreamBase, "-4-8", "-4.8")
 	upstreamBase = strings.ReplaceAll(upstreamBase, "-4-7", "-4.7")
 	upstreamBase = strings.ReplaceAll(upstreamBase, "-4-6", "-4.6")
 	upstreamBase = strings.ReplaceAll(upstreamBase, "-4-5", "-4.5")

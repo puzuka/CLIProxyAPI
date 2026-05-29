@@ -24,11 +24,11 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/access"
-	"github.com/router-for-me/CLIProxyAPI/v7/internal/apikeypolicy"
 	managementHandlers "github.com/router-for-me/CLIProxyAPI/v7/internal/api/handlers/management"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/api/middleware"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/api/modules"
 	ampmodule "github.com/router-for-me/CLIProxyAPI/v7/internal/api/modules/amp"
+	"github.com/router-for-me/CLIProxyAPI/v7/internal/apikeypolicy"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/cache"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/config"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/home"
@@ -281,6 +281,7 @@ func NewServer(cfg *config.Config, authManager *auth.Manager, accessManager *sdk
 	applySignatureCacheConfig(nil, cfg)
 	// Initialize management handler
 	s.mgmt = managementHandlers.NewHandler(cfg, configFilePath, authManager)
+	s.mgmt.SetAPIHandler(s.handlers)
 	if optionState.localPassword != "" {
 		s.mgmt.SetLocalPassword(optionState.localPassword)
 	}
@@ -703,6 +704,7 @@ func (s *Server) registerManagementRoutes() {
 
 		mgmt.GET("/auth-files", s.mgmt.ListAuthFiles)
 		mgmt.GET("/auth-files/models", s.mgmt.GetAuthFileModels)
+		mgmt.POST("/auth-files/test-model", s.mgmt.TestAuthFileModel)
 		mgmt.GET("/model-definitions/:channel", s.mgmt.GetStaticModelDefinitions)
 		mgmt.GET("/auth-files/download", s.mgmt.DownloadAuthFile)
 		mgmt.POST("/auth-files", s.mgmt.UploadAuthFile)
@@ -713,6 +715,7 @@ func (s *Server) registerManagementRoutes() {
 
 		mgmt.GET("/anthropic-auth-url", s.mgmt.RequestAnthropicToken)
 		mgmt.GET("/codex-auth-url", s.mgmt.RequestCodexToken)
+		mgmt.GET("/copilot-auth-url", s.mgmt.RequestCopilotToken)
 		mgmt.GET("/gemini-cli-auth-url", s.mgmt.RequestGeminiCLIToken)
 		mgmt.GET("/antigravity-auth-url", s.mgmt.RequestAntigravityToken)
 		mgmt.GET("/kimi-auth-url", s.mgmt.RequestKimiToken)
@@ -918,6 +921,9 @@ func (s *Server) handleHomeCodexClientModels(c *gin.Context) {
 		if entry.ownedBy != "" {
 			model["owned_by"] = entry.ownedBy
 		}
+		if entry.provider != "" {
+			model["provider"] = entry.provider
+		}
 		if entry.displayName != "" {
 			model["display_name"] = entry.displayName
 			model["description"] = entry.displayName
@@ -954,6 +960,7 @@ type homeModelEntry struct {
 	id          string
 	created     int64
 	ownedBy     string
+	provider    string
 	displayName string
 }
 
@@ -1179,7 +1186,7 @@ func decodeHomeModels(raw []byte) ([]homeModelEntry, error) {
 
 	seen := make(map[string]struct{})
 	out := make([]homeModelEntry, 0, 256)
-	for _, models := range bySection {
+	for section, models := range bySection {
 		for _, model := range models {
 			id, _ := model["id"].(string)
 			id = strings.TrimSpace(id)
@@ -1212,6 +1219,13 @@ func decodeHomeModels(raw []byte) ([]homeModelEntry, error) {
 
 			ownedBy, _ := model["owned_by"].(string)
 			ownedBy = strings.TrimSpace(ownedBy)
+			provider := firstHomeModelString(model, "provider", "provider_key", "type")
+			if provider == "" {
+				provider = ownedBy
+			}
+			if provider == "" {
+				provider = strings.TrimSpace(section)
+			}
 			displayName, _ := model["display_name"].(string)
 			displayName = strings.TrimSpace(displayName)
 			if displayName == "" {
@@ -1223,6 +1237,7 @@ func decodeHomeModels(raw []byte) ([]homeModelEntry, error) {
 				id:          id,
 				created:     created,
 				ownedBy:     ownedBy,
+				provider:    provider,
 				displayName: displayName,
 			})
 		}
@@ -1233,6 +1248,16 @@ func decodeHomeModels(raw []byte) ([]homeModelEntry, error) {
 		return nil, fmt.Errorf("home models payload contains no models")
 	}
 	return out, nil
+}
+
+func firstHomeModelString(model map[string]any, keys ...string) string {
+	for _, key := range keys {
+		value, _ := model[key].(string)
+		if value = strings.TrimSpace(value); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 // Start begins listening for and serving HTTP or HTTPS requests.
