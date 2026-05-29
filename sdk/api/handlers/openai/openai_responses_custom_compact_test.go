@@ -45,9 +45,9 @@ func (e *customCompactLLMExecutor) Execute(ctx context.Context, auth *coreauth.A
 		text = validCustomCompactOutput()
 	}
 	chatResp := map[string]interface{}{
-		"id":      "chatcmpl-test",
-		"object":  "chat.completion",
-		"model":   req.Model,
+		"id":     "chatcmpl-test",
+		"object": "chat.completion",
+		"model":  req.Model,
 		"choices": []map[string]interface{}{
 			{
 				"index": 0,
@@ -99,7 +99,8 @@ Do not do: Do not modify the existing compact-fallback behavior when it is enabl
 
 // TestCustomCompactActivatesWhenFallbackDisabled verifies that when
 // compact-fallback is disabled and custom-compact is enabled, the proxy
-// routes the compact request through the custom LLM compact path.
+// routes the compact request through the custom LLM compact path and
+// returns the response.compaction format with preserved messages.
 func TestCustomCompactActivatesWhenFallbackDisabled(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	llmExecutor := &customCompactLLMExecutor{provider: "openai-compatibility"}
@@ -126,7 +127,7 @@ func TestCustomCompactActivatesWhenFallbackDisabled(t *testing.T) {
 	router := gin.New()
 	router.POST("/v1/responses/compact", h.Compact)
 
-	body := `{"model":"deepseek-v4-pro","input":[{"type":"message","role":"user","content":[{"type":"input_text","text":"hello world"}]},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"hi there"}]}]}`
+	body := `{"model":"deepseek-v4-pro","input":[{"type":"message","role":"developer","content":[{"type":"input_text","text":"system instructions"}]},{"type":"message","role":"user","content":[{"type":"input_text","text":"hello world"}]},{"type":"message","role":"assistant","content":[{"type":"output_text","text":"hi there"}]}]}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses/compact", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	resp := httptest.NewRecorder()
@@ -142,20 +143,59 @@ func TestCustomCompactActivatesWhenFallbackDisabled(t *testing.T) {
 	if llmExecutor.alt != "" {
 		t.Fatalf("executor alt = %q, want empty (chat completions)", llmExecutor.alt)
 	}
-	// Verify the response has the Responses API compact format
+	// Verify the response uses response.compaction format
 	respBody := resp.Body.String()
 	if !gjson.Get(respBody, "id").Exists() {
 		t.Fatalf("response missing id field")
 	}
-	if gjson.Get(respBody, "object").String() != "response" {
-		t.Fatalf("response object = %q, want %q", gjson.Get(respBody, "object").String(), "response")
+	if gjson.Get(respBody, "object").String() != "response.compaction" {
+		t.Fatalf("response object = %q, want %q", gjson.Get(respBody, "object").String(), "response.compaction")
 	}
-	if gjson.Get(respBody, "status").String() != "completed" {
-		t.Fatalf("response status = %q, want %q", gjson.Get(respBody, "status").String(), "completed")
+
+	// Verify preserved developer and user messages in output
+	outputArr := gjson.Get(respBody, "output")
+	if !outputArr.IsArray() {
+		t.Fatalf("output should be an array")
 	}
-	outputText := gjson.Get(respBody, "output.0.content.0.text").String()
-	if !strings.Contains(outputText, "Current task:") {
-		t.Fatalf("output text missing 'Current task:' section; got: %s", outputText[:min(200, len(outputText))])
+	items := outputArr.Array()
+	if len(items) < 2 {
+		t.Fatalf("output should have at least 2 items (preserved messages + summary), got %d", len(items))
+	}
+
+	// Check that developer and user messages are preserved
+	foundDeveloper := false
+	foundUser := false
+	foundSummary := false
+	for _, item := range items {
+		itemType := item.Get("type").String()
+		role := item.Get("role").String()
+		if itemType == "message" && role == "developer" {
+			foundDeveloper = true
+			// Verify developer message content is preserved
+			devText := item.Get("content.0.text").String()
+			if devText != "system instructions" {
+				t.Fatalf("developer message text = %q, want %q", devText, "system instructions")
+			}
+		}
+		if itemType == "message" && role == "user" {
+			foundUser = true
+		}
+		if itemType == "compaction_summary" {
+			foundSummary = true
+			summaryText := item.Get("encrypted_content").String()
+			if !strings.Contains(summaryText, "Current task:") {
+				t.Fatalf("compaction_summary text missing 'Current task:' section; got: %s", summaryText[:min(200, len(summaryText))])
+			}
+		}
+	}
+	if !foundDeveloper {
+		t.Fatalf("output missing preserved developer message")
+	}
+	if !foundUser {
+		t.Fatalf("output missing preserved user message")
+	}
+	if !foundSummary {
+		t.Fatalf("output missing compaction_summary item")
 	}
 }
 
@@ -404,6 +444,33 @@ func TestExtractConversationForCompact(t *testing.T) {
 			]}`,
 			contains: []string{"Function call: read_file", "Function output: package main"},
 		},
+		{
+			name: "with instructions and tools",
+			input: `{"model":"m","instructions":"You are a helpful coding agent.","tools":[{"name":"exec_command"},{"name":"read_file"}],"input":[
+				{"type":"message","role":"user","content":[{"type":"input_text","text":"hello"}]}
+			]}`,
+			contains: []string{
+				"[System instructions summary]",
+				"helpful coding agent",
+				"[Available tools: exec_command, read_file]",
+				"User: hello",
+			},
+		},
+		{
+			name: "with OpenAI function calling tools format",
+			input: `{"model":"m","tools":[{"function":{"name":"apply_patch"}},{"function":{"name":"exec_command"}}],"input":[
+				{"type":"message","role":"user","content":[{"type":"input_text","text":"test"}]}
+			]}`,
+			contains: []string{"[Available tools: apply_patch, exec_command]", "User: test"},
+		},
+		{
+			name: "developer messages extracted",
+			input: `{"model":"m","input":[
+				{"type":"message","role":"developer","content":[{"type":"input_text","text":"system rules here"}]},
+				{"type":"message","role":"user","content":[{"type":"input_text","text":"do stuff"}]}
+			]}`,
+			contains: []string{"Developer: system rules here", "User: do stuff"},
+		},
 	}
 
 	for _, tt := range tests {
@@ -448,6 +515,82 @@ func TestValidateCustomCompactOutput(t *testing.T) {
 			t.Fatalf("expected invalid output for short text")
 		}
 	})
+}
+
+// TestBuildCompactResponseJSON verifies that the compact response matches
+// the real Codex response.compaction format with preserved messages.
+func TestBuildCompactResponseJSON(t *testing.T) {
+	input := `{"model":"m","input":[
+		{"type":"message","role":"developer","content":[{"type":"input_text","text":"dev instructions"}]},
+		{"type":"message","role":"user","content":[{"type":"input_text","text":"fix the bug"}]},
+		{"type":"message","role":"assistant","content":[{"type":"output_text","text":"checking..."}]},
+		{"type":"function_call","name":"exec_command","arguments":"{}"},
+		{"type":"function_call_output","output":"ok"}
+	]}`
+
+	summary := "Current task: fixing a bug\nUser intent: fix it\nRepo / location: /test\nCurrent state: in progress\nImportant files: main.go\nChanges already made: none\nKnown verification: none\nUnfinished work: everything\nNext action: run tests\nDo not do: delete files"
+
+	result, err := buildCompactResponseJSON(summary, []byte(input))
+	if err != nil {
+		t.Fatalf("buildCompactResponseJSON error: %v", err)
+	}
+
+	// Parse and verify structure
+	if gjson.GetBytes(result, "object").String() != "response.compaction" {
+		t.Fatalf("object = %q, want %q", gjson.GetBytes(result, "object").String(), "response.compaction")
+	}
+
+	output := gjson.GetBytes(result, "output")
+	if !output.IsArray() {
+		t.Fatalf("output should be an array")
+	}
+
+	items := output.Array()
+	// Should have: developer message, user message, compaction_summary
+	// (assistant messages and function calls are NOT preserved)
+	if len(items) != 3 {
+		t.Fatalf("output length = %d, want 3 (developer + user + summary)", len(items))
+	}
+
+	// First item: developer message
+	if items[0].Get("type").String() != "message" || items[0].Get("role").String() != "developer" {
+		t.Fatalf("output[0] should be developer message; got type=%s role=%s",
+			items[0].Get("type").String(), items[0].Get("role").String())
+	}
+	if items[0].Get("content.0.text").String() != "dev instructions" {
+		t.Fatalf("developer content mismatch")
+	}
+
+	// Second item: user message
+	if items[1].Get("type").String() != "message" || items[1].Get("role").String() != "user" {
+		t.Fatalf("output[1] should be user message")
+	}
+
+	// Last item: compaction_summary
+	last := items[2]
+	if last.Get("type").String() != "compaction_summary" {
+		t.Fatalf("last item type = %q, want %q", last.Get("type").String(), "compaction_summary")
+	}
+	if !strings.Contains(last.Get("encrypted_content").String(), "Current task: fixing a bug") {
+		t.Fatalf("summary text mismatch")
+	}
+}
+
+// TestTruncateText verifies the upgraded truncation behavior.
+func TestTruncateText(t *testing.T) {
+	short := "hello"
+	if truncateText(short, 100) != "hello" {
+		t.Fatalf("short text should not be truncated")
+	}
+
+	long := strings.Repeat("x", 5000)
+	result := truncateText(long, 4000)
+	if len(result) != 4000+len("...(truncated)") {
+		t.Fatalf("truncated text length = %d, want %d", len(result), 4000+len("...(truncated)"))
+	}
+	if !strings.HasSuffix(result, "...(truncated)") {
+		t.Fatalf("truncated text should end with '...(truncated)'")
+	}
 }
 
 func min(a, b int) int {

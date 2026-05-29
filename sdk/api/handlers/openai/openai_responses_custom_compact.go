@@ -41,7 +41,19 @@ Quality rules:
 - State "Unknown" explicitly instead of inventing
 - Do not truncate mid-sentence
 - Deduplicate file paths (prefer repo-relative)
-- Make "Next action" a single executable step, not a category list`
+- Make "Next action" a single executable step, not a category list
+- Preserve tool/function call context that is relevant to the active task
+- If the conversation includes developer/system instructions, note the key constraints (not the full text)`
+
+// defaultFunctionArgMaxLen is the default maximum character length for function
+// call arguments before truncation. Real compact payloads contain function calls
+// with arguments up to 25K+ chars (e.g. apply_patch); a 500-char cap loses
+// almost all the meaningful content.
+const defaultFunctionArgMaxLen = 4000
+
+// defaultFunctionOutputMaxLen is the default maximum character length for
+// function call output before truncation.
+const defaultFunctionOutputMaxLen = 4000
 
 // requiredHandoffSections are the section headers that must appear in a valid
 // custom compact response. Used for output validation.
@@ -60,11 +72,11 @@ var requiredHandoffSections = []string{
 
 // customCompactRequest is the /chat/completions payload sent to the LLM.
 type customCompactRequest struct {
-	Model       string                   `json:"model"`
-	Messages    []customCompactMessage   `json:"messages"`
-	MaxTokens   int                      `json:"max_tokens,omitempty"`
-	Temperature float64                  `json:"temperature"`
-	Stream      bool                     `json:"stream"`
+	Model       string                 `json:"model"`
+	Messages    []customCompactMessage `json:"messages"`
+	MaxTokens   int                    `json:"max_tokens,omitempty"`
+	Temperature float64                `json:"temperature"`
+	Stream      bool                   `json:"stream"`
 }
 
 type customCompactMessage struct {
@@ -72,65 +84,183 @@ type customCompactMessage struct {
 	Content string `json:"content"`
 }
 
-// customCompactResponse is a minimal Responses API compact response envelope.
-type customCompactResponse struct {
-	ID        string                     `json:"id"`
-	Object    string                     `json:"object"`
-	CreatedAt int64                      `json:"created_at"`
-	Status    string                     `json:"status"`
-	Output    []customCompactOutputItem  `json:"output"`
+// compactionSummaryResponse matches the real Codex compact response format:
+//   - object: "response.compaction"
+//   - output array: preserved developer/user messages + final compaction_summary item
+//
+// This is the format returned by the Codex native compact endpoint
+// (chatgpt.com/backend-api/codex/responses/compact).
+type compactionSummaryResponse struct {
+	ID        string        `json:"id"`
+	Object    string        `json:"object"`
+	CreatedAt int64         `json:"created_at"`
+	Output    []interface{} `json:"output"`
 }
 
-type customCompactOutputItem struct {
-	ID      string                       `json:"id"`
-	Type    string                       `json:"type"`
-	Role    string                       `json:"role"`
-	Content []customCompactContentPart   `json:"content"`
+// compactionOutputMessage is a preserved developer/user message in the compact
+// output array. These messages carry system instructions, AGENTS.md, skills,
+// plugins, memory, and the original user request.
+type compactionOutputMessage struct {
+	ID      string                   `json:"id"`
+	Type    string                   `json:"type"`
+	Status  string                   `json:"status"`
+	Content []compactionContentPart  `json:"content"`
+	Role    string                   `json:"role"`
 }
 
-type customCompactContentPart struct {
+// compactionSummaryItem is the final item in the compact output array that
+// contains the LLM-generated compact summary text. The Codex client expects
+// the field to be named "encrypted_content" (even though the custom compact
+// path stores plain text, not ciphertext). Omitting this field causes the
+// client to fail with: missing field `encrypted_content`.
+type compactionSummaryItem struct {
+	ID               string `json:"id"`
+	Type             string `json:"type"`
+	EncryptedContent string `json:"encrypted_content"`
+}
+
+type compactionContentPart struct {
 	Type        string   `json:"type"`
 	Text        string   `json:"text"`
-	Annotations []string `json:"annotations"`
+	Annotations []string `json:"annotations,omitempty"`
 }
 
-// buildCompactResponseJSON creates a Responses API compact response with the
-// given text as the sole output_text content.
-func buildCompactResponseJSON(text string) ([]byte, error) {
-	resp := customCompactResponse{
-		ID:        fmt.Sprintf("resp_compact_%d", time.Now().UnixMilli()),
-		Object:    "response",
-		CreatedAt: time.Now().Unix(),
-		Status:    "completed",
-		Output: []customCompactOutputItem{
-			{
-				ID:   "msg_compact_0",
-				Type: "message",
-				Role: "assistant",
-				Content: []customCompactContentPart{
-					{
-						Type:        "output_text",
-						Text:        text,
-						Annotations: []string{},
-					},
-				},
-			},
-		},
+// buildCompactResponseJSON creates a compact response that matches the real
+// Codex compact output format (response.compaction). It preserves developer
+// and user messages from the original input and appends the LLM-generated
+// compaction summary as the final output item.
+//
+// Output format:
+//
+//	{
+//	  "id": "resp_compact_<timestamp>",
+//	  "object": "response.compaction",
+//	  "created_at": <unix_timestamp>,
+//	  "output": [
+//	    { preserved developer messages... },
+//	    { preserved user messages... },
+//	    { "type": "compaction_summary", "encrypted_content": "<summary_text>" }
+//	  ]
+//	}
+func buildCompactResponseJSON(summaryText string, rawJSON []byte) ([]byte, error) {
+	now := time.Now()
+	respID := fmt.Sprintf("resp_compact_%d", now.UnixMilli())
+
+	// Collect preserved developer/user messages from the original input
+	var outputItems []interface{}
+	input := gjson.GetBytes(rawJSON, "input")
+	if input.IsArray() {
+		msgIdx := 0
+		for _, item := range input.Array() {
+			itemType := item.Get("type").String()
+			role := item.Get("role").String()
+			if itemType == "message" && (role == "developer" || role == "user") {
+				// Preserve this message in the compact output
+				msg := compactionOutputMessage{
+					ID:     fmt.Sprintf("msg_compact_%d", msgIdx),
+					Type:   "message",
+					Status: "completed",
+					Role:   role,
+				}
+				content := item.Get("content")
+				if content.IsArray() {
+					for _, part := range content.Array() {
+						partType := part.Get("type").String()
+						if partType == "input_text" || partType == "text" {
+							msg.Content = append(msg.Content, compactionContentPart{
+								Type: "input_text",
+								Text: part.Get("text").String(),
+							})
+						}
+					}
+				} else if content.Type == gjson.String {
+					msg.Content = append(msg.Content, compactionContentPart{
+						Type: "input_text",
+						Text: content.String(),
+					})
+				}
+				if len(msg.Content) > 0 {
+					outputItems = append(outputItems, msg)
+					msgIdx++
+				}
+			}
+		}
+	}
+
+	// Append the compaction summary as the final item.
+	// The Codex client deserializes "encrypted_content" (a plain string) on
+	// compaction_summary items. Using "content" (an array) causes:
+	//   missing field `encrypted_content` at line 1 column NNNNN
+	summary := compactionSummaryItem{
+		ID:               fmt.Sprintf("cmp_compact_%d", now.UnixMilli()),
+		Type:             "compaction_summary",
+		EncryptedContent: summaryText,
+	}
+	outputItems = append(outputItems, summary)
+
+	resp := compactionSummaryResponse{
+		ID:        respID,
+		Object:    "response.compaction",
+		CreatedAt: now.Unix(),
+		Output:    outputItems,
 	}
 	return json.Marshal(resp)
 }
 
 // extractConversationForCompact extracts the conversation content from a
-// compact request's input array and formats it as a text block suitable
-// for LLM summarization. It skips reasoning items (which carry
-// provider-specific signatures) and focuses on user/assistant messages.
+// compact request and formats it as a text block suitable for LLM
+// summarization. It processes:
+//   - top-level "instructions" field (system instructions the agent was given)
+//   - top-level "tools" array (tool names for context)
+//   - input array: user/assistant messages, function calls, function outputs
+//   - skips reasoning items (provider-specific signatures)
+//
+// Function call arguments and outputs are truncated at configurable limits
+// (default 4000 chars) to preserve meaningful content from large payloads
+// like apply_patch calls.
 func extractConversationForCompact(rawJSON []byte) string {
-	input := gjson.GetBytes(rawJSON, "input")
-	if !input.Exists() {
-		return ""
+	var sb strings.Builder
+
+	// Extract top-level instructions (developer/system prompt context)
+	instructions := gjson.GetBytes(rawJSON, "instructions")
+	if instructions.Exists() && instructions.Type == gjson.String {
+		instText := instructions.String()
+		if len(instText) > 0 {
+			// Include a truncated version of instructions for context
+			sb.WriteString("[System instructions summary]\n")
+			if len(instText) > 2000 {
+				sb.WriteString(instText[:2000])
+				sb.WriteString("\n...(truncated)\n\n")
+			} else {
+				sb.WriteString(instText)
+				sb.WriteString("\n\n")
+			}
+		}
 	}
 
-	var sb strings.Builder
+	// Extract tool names for context
+	tools := gjson.GetBytes(rawJSON, "tools")
+	if tools.IsArray() && len(tools.Array()) > 0 {
+		sb.WriteString("[Available tools: ")
+		var toolNames []string
+		for _, tool := range tools.Array() {
+			name := tool.Get("name").String()
+			if name == "" {
+				// OpenAI function calling format: tools[].function.name
+				name = tool.Get("function.name").String()
+			}
+			if name != "" {
+				toolNames = append(toolNames, name)
+			}
+		}
+		sb.WriteString(strings.Join(toolNames, ", "))
+		sb.WriteString("]\n\n")
+	}
+
+	input := gjson.GetBytes(rawJSON, "input")
+	if !input.Exists() {
+		return sb.String()
+	}
 
 	// Handle input as a string (simple text input)
 	if input.Type == gjson.String {
@@ -141,7 +271,7 @@ func extractConversationForCompact(rawJSON []byte) string {
 
 	// Handle input as an array of items
 	if !input.IsArray() {
-		return ""
+		return sb.String()
 	}
 
 	for _, item := range input.Array() {
@@ -184,13 +314,13 @@ func extractConversationForCompact(rawJSON []byte) string {
 		if itemType == "function_call" {
 			name := item.Get("name").String()
 			args := item.Get("arguments").String()
-			sb.WriteString(fmt.Sprintf("Function call: %s(%s)\n\n", name, truncateText(args, 500)))
+			sb.WriteString(fmt.Sprintf("Function call: %s(%s)\n\n", name, truncateText(args, defaultFunctionArgMaxLen)))
 			continue
 		}
 
 		if itemType == "function_call_output" {
 			output := item.Get("output").String()
-			sb.WriteString(fmt.Sprintf("Function output: %s\n\n", truncateText(output, 500)))
+			sb.WriteString(fmt.Sprintf("Function output: %s\n\n", truncateText(output, defaultFunctionOutputMaxLen)))
 			continue
 		}
 	}
@@ -211,7 +341,7 @@ func truncateText(text string, maxLen int) string {
 	if len(text) <= maxLen {
 		return text
 	}
-	return text[:maxLen] + "..."
+	return text[:maxLen] + "...(truncated)"
 }
 
 // buildCustomCompactUserPrompt builds the user message for the LLM compaction
@@ -279,11 +409,12 @@ func shouldApplyCustomCompact(h *OpenAIResponsesAPIHandler, modelName string) bo
 }
 
 // executeCustomCompact performs LLM-based context compaction:
-// 1. Extracts conversation from the compact request input
+// 1. Extracts conversation from the compact request input (including instructions and tools)
 // 2. Builds a system + user prompt for the LLM
 // 3. Calls /chat/completions via ExecuteWithAuthManager with the configured model
 // 4. Validates the output and retries if needed
-// 5. Returns the result wrapped in the Responses API compact response format
+// 5. Returns the result wrapped in the Codex response.compaction format with
+//    preserved developer/user messages and a compaction_summary item
 func executeCustomCompact(h *OpenAIResponsesAPIHandler, cliCtx context.Context, modelName string, rawJSON []byte) ([]byte, error) {
 	cc := h.Cfg.CustomCompact
 	compactModel := cc.Model
@@ -297,7 +428,7 @@ func executeCustomCompact(h *OpenAIResponsesAPIHandler, cliCtx context.Context, 
 		conversation = "No conversation content available."
 	}
 
-	log.Infof("custom compact: using model %s for compaction (original model: %s)", compactModel, modelName)
+	log.Infof("custom compact: using model %s for compaction (original model: %s, conversation_len: %d)", compactModel, modelName, len(conversation))
 
 	var lastText string
 	for attempt := 0; attempt <= maxRetries; attempt++ {
@@ -357,12 +488,12 @@ func executeCustomCompact(h *OpenAIResponsesAPIHandler, cliCtx context.Context, 
 			} else {
 				log.Infof("custom compact: successful compaction on attempt %d, output length=%d", attempt+1, len(text))
 			}
-			return buildCompactResponseJSON(text)
+			return buildCompactResponseJSON(text, rawJSON)
 		}
 
 		log.Infof("custom compact attempt %d: output missing sections %v, retrying", attempt+1, missing)
 	}
 
 	// Should not reach here, but safety fallback
-	return buildCompactResponseJSON(lastText)
+	return buildCompactResponseJSON(lastText, rawJSON)
 }

@@ -414,6 +414,7 @@ compact-fallback:
   enabled: true
   model: "gpt-5.5"                           # must resolve to a codex provider
   applies-to-providers: ["openai-compatibility"]  # or ["*"] for all non-codex
+  trigger-log: true                           # optional: log compact I/O to logs/
 ```
 
 | Field | Description |
@@ -421,6 +422,7 @@ compact-fallback:
 | `enabled` | Toggle. Default `false`. |
 | `model` | Codex-capable substitute model (e.g. `gpt-5.5`). Must have an active Codex auth registered. |
 | `applies-to-providers` | Provider identifiers that trigger the fallback. `["*"]` or `[]` matches every non-Codex provider. |
+| `trigger-log` | When `true`, each compact-fallback call writes a JSON log file (`logs/compact-*.json`) containing the request input and response output. The write happens in a background goroutine and never affects compact speed or correctness. Default `false`. |
 
 **When to use:** You have Codex credentials and want compact to be handled by OpenAI's native compaction service regardless of which model the client is using.
 
@@ -429,6 +431,7 @@ compact-fallback:
 2. Proxy rewrites the model to `gpt-5.5`, strips provider-specific reasoning items
 3. Request is forwarded to the Codex executor which calls the upstream compact endpoint
 4. Response is returned to the client verbatim
+5. If `trigger-log: true`, a background goroutine writes the request input and response output to `logs/compact-<timestamp>.json`
 
 ### Option B: Custom Compact (LLM-based, no Codex dependency)
 
@@ -444,6 +447,7 @@ custom-compact:
   max-tokens: 4096            # optional, default 4096
   temperature: 0.2            # optional, default 0.2
   max-retries: 1              # optional, default 1
+  trigger-log: true           # optional: log compact I/O to logs/
 ```
 
 | Field | Description |
@@ -453,16 +457,17 @@ custom-compact:
 | `max-tokens` | Maximum tokens for the LLM response. Default `4096`. |
 | `temperature` | Sampling temperature. Lower = more deterministic. Default `0.2`. |
 | `max-retries` | Retry attempts when the LLM output is missing required sections. Default `1`. |
+| `trigger-log` | When `true`, each custom compact call writes a JSON log file (`logs/compact-*.json`) containing the request input and response output. The write happens in a background goroutine. Default `false`. |
 
 **When to use:** You do not have Codex credentials, or you want to compact with a specific model (e.g. a local or third-party model) without depending on OpenAI's compact endpoint.
 
 **Behavior:**
 1. Client requests compact for any non-Codex model
-2. Proxy extracts conversation from the compact request input (skipping reasoning items)
+2. Proxy extracts the full compact payload: top-level `instructions` (system prompt, truncated), `tools` (tool names), and `input` array (messages, function calls with 4K-char truncation, function outputs)
 3. Proxy calls `/chat/completions` with the configured model and a structured handoff prompt
 4. Output is validated for 10 required sections (Current task, User intent, Next action, etc.)
 5. If validation fails, the proxy retries with feedback; on the last attempt the output is accepted as-is
-6. The LLM text is wrapped in the standard Responses API compact response format
+6. The LLM text is wrapped in `response.compaction` format: preserved developer/user messages + `compaction_summary` item (matches Codex native compact output)
 
 ### Priority Order
 
@@ -475,15 +480,16 @@ When a compact request arrives, the proxy evaluates in this order:
 
 ### Examples
 
-**Use Codex compact for all non-Codex models:**
+**Use Codex compact for all non-Codex models (with logging):**
 ```yaml
 compact-fallback:
   enabled: true
   model: "gpt-5.5"
   applies-to-providers: ["*"]
+  trigger-log: true
 ```
 
-**Use deepseek for compact (no Codex needed):**
+**Use deepseek for compact (no Codex needed, with logging):**
 ```yaml
 compact-fallback:
   enabled: false
@@ -491,6 +497,7 @@ compact-fallback:
 custom-compact:
   enabled: true
   model: "deepseek-v4-pro"
+  trigger-log: true
 ```
 
 **Use a specific model with tuned parameters:**

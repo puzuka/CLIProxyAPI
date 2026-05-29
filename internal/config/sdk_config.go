@@ -144,6 +144,13 @@ type CompactFallbackConfig struct {
 	// "9router") are covered without forcing the operator to enumerate each one.
 	// Codex-native models always bypass the fallback regardless of this setting.
 	AppliesToProviders []string `yaml:"applies-to-providers,omitempty" json:"applies-to-providers,omitempty"`
+
+	// TriggerLog enables async file logging of compact request input and
+	// response output when the compact-fallback path fires. Logs are written
+	// to the logs/ directory in JSON format. The write happens in a separate
+	// goroutine so it never slows the compact response, and write errors are
+	// silently logged without affecting the compact flow.
+	TriggerLog bool `yaml:"trigger-log,omitempty" json:"trigger-log,omitempty"`
 }
 
 // CustomCompactConfig configures LLM-based context compaction for
@@ -170,6 +177,12 @@ type CustomCompactConfig struct {
 	// MaxRetries is the maximum number of retry attempts when the LLM
 	// response fails validation. Default 1.
 	MaxRetries int `yaml:"max-retries,omitempty" json:"max-retries,omitempty"`
+
+	// TriggerLog enables async file logging of custom compact request input
+	// and LLM response output. Logs are written to the logs/ directory in
+	// JSON format. The write happens in a separate goroutine so it never
+	// slows the compact response. Default false.
+	TriggerLog bool `yaml:"trigger-log,omitempty" json:"trigger-log,omitempty"`
 }
 
 // EffectiveMaxTokens returns the configured max-tokens or the default 4096.
