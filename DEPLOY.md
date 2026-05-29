@@ -40,6 +40,7 @@ go build -o cli-proxy-api ./cmd/server
 3. **Environment variables** (optional)
    - Copy `.env.example` to `.env`
    - Configure postgres/git/object store if needed
+   - Configure vision middleware (e.g. `CAPTION_MODEL`) if using text-only models with images
    - For local file-based storage (default), no env vars required
 
 ## Auto-Start on macOS (launchd)
@@ -334,6 +335,17 @@ If you see `/var/lib/cliproxy: permission denied`:
 - **Logs**: `./logs/` (stdout.log, stderr.log)
 - **Config**: `./config.yaml` by default; local 9router migration uses `~/.cli-proxy-api/config.9router.yaml`
 - **Environment**: `./.env`
+
+## Vision Middleware
+
+CLIProxyAPI includes an in-process vision middleware that automatically describes images for text-only models. It intercepts image payloads and calls a vision model (default: `kimi-k2.6`) via a loopback request, passing the text description to the upstream model instead.
+
+Configure it in your `.env` file:
+```env
+VISION_DISABLE=0                  # Set to 1 to completely disable the vision middleware
+CAPTION_MODEL=gpt-5.5             # The vision model used to describe images
+CAPTION_MAX_TOKENS=1000           # Max tokens for the image description
+```
 
 ## Security Notes
 
