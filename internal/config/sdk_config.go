@@ -66,6 +66,19 @@ type SDKConfig struct {
 	//     applies-to-providers: ["openai-compatibility"]
 	CompactFallback CompactFallbackConfig `yaml:"compact-fallback,omitempty" json:"compact-fallback,omitempty"`
 
+	// CustomCompact enables LLM-based context compaction when compact-fallback
+	// is disabled. Instead of forwarding the request to the Codex compact
+	// endpoint, the proxy extracts conversation context from the compact input,
+	// calls /chat/completions with a summarization prompt using the configured
+	// model (which must be any model registered in CLIProxy), and wraps the
+	// result in the Responses API compact response format.
+	//
+	// Example:
+	//   custom-compact:
+	//     enabled: true
+	//     model: "deepseek-v4-pro"
+	CustomCompact CustomCompactConfig `yaml:"custom-compact,omitempty" json:"custom-compact,omitempty"`
+
 	// GuidelineInjection controls whether a project-level guideline (the
 	// agent-harness-kit recommendation by default) is prepended to the system
 	// prompt of inbound requests across all four formats (claude / openai-chat
@@ -131,6 +144,69 @@ type CompactFallbackConfig struct {
 	// "9router") are covered without forcing the operator to enumerate each one.
 	// Codex-native models always bypass the fallback regardless of this setting.
 	AppliesToProviders []string `yaml:"applies-to-providers,omitempty" json:"applies-to-providers,omitempty"`
+
+	// TriggerLog enables async file logging of compact request input and
+	// response output when the compact-fallback path fires. Logs are written
+	// to the logs/ directory in JSON format. The write happens in a separate
+	// goroutine so it never slows the compact response, and write errors are
+	// silently logged without affecting the compact flow.
+	TriggerLog bool `yaml:"trigger-log,omitempty" json:"trigger-log,omitempty"`
+}
+
+// CustomCompactConfig configures LLM-based context compaction for
+// /v1/responses/compact requests. When enabled (and compact-fallback is
+// disabled), the proxy does not forward the compact request to a Codex
+// endpoint. Instead it extracts the conversation from the compact input,
+// builds a summarization prompt, calls /chat/completions with the configured
+// model through the proxy's own provider system, and wraps the LLM output
+// in the Responses API compact response format.
+type CustomCompactConfig struct {
+	// Enabled toggles custom compact. Default false.
+	Enabled bool `yaml:"enabled" json:"enabled"`
+
+	// Model is the model name to use for the LLM compaction call (e.g.
+	// "deepseek-v4-pro"). Must be any model registered in CLIProxy.
+	Model string `yaml:"model" json:"model"`
+
+	// MaxTokens limits the LLM response length. Default 4096.
+	MaxTokens int `yaml:"max-tokens,omitempty" json:"max-tokens,omitempty"`
+
+	// Temperature controls the LLM sampling temperature. Default 0.2.
+	Temperature *float64 `yaml:"temperature,omitempty" json:"temperature,omitempty"`
+
+	// MaxRetries is the maximum number of retry attempts when the LLM
+	// response fails validation. Default 1.
+	MaxRetries int `yaml:"max-retries,omitempty" json:"max-retries,omitempty"`
+
+	// TriggerLog enables async file logging of custom compact request input
+	// and LLM response output. Logs are written to the logs/ directory in
+	// JSON format. The write happens in a separate goroutine so it never
+	// slows the compact response. Default false.
+	TriggerLog bool `yaml:"trigger-log,omitempty" json:"trigger-log,omitempty"`
+}
+
+// EffectiveMaxTokens returns the configured max-tokens or the default 4096.
+func (c CustomCompactConfig) EffectiveMaxTokens() int {
+	if c.MaxTokens > 0 {
+		return c.MaxTokens
+	}
+	return 4096
+}
+
+// EffectiveTemperature returns the configured temperature or the default 0.2.
+func (c CustomCompactConfig) EffectiveTemperature() float64 {
+	if c.Temperature != nil {
+		return *c.Temperature
+	}
+	return 0.2
+}
+
+// EffectiveMaxRetries returns the configured max-retries or the default 1.
+func (c CustomCompactConfig) EffectiveMaxRetries() int {
+	if c.MaxRetries > 0 {
+		return c.MaxRetries
+	}
+	return 1
 }
 
 // StreamingConfig holds server streaming behavior configuration.
