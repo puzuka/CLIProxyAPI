@@ -218,8 +218,8 @@ func normalizeKiroModelID(modelID string) string {
 		return ""
 	}
 
-	if strings.HasPrefix(modelID, "amazonq-") {
-		modelID = strings.TrimPrefix(modelID, "amazonq-")
+	if after, ok := strings.CutPrefix(modelID, "amazonq-"); ok {
+		modelID = after
 	}
 
 	// Replace dots with hyphens (e.g., 4.5 → 4-5)

@@ -65,6 +65,14 @@ type ModelInfo struct {
 	// array (e.g., openai-compatibility.*.models[], *-api-key.models[]).
 	// UserDefined models have thinking configuration passed through without validation.
 	UserDefined bool `json:"-"`
+
+	// AutoPrefixAliasFor records the prefixed model ID this entry is the bare
+	// alias of. It is set only on the convenience bare twin that
+	// applyModelPrefixes emits alongside a "prefix/model" entry when
+	// force-model-prefix is disabled. The bare twin stays routable but is
+	// hidden from model listings when its prefixed counterpart is available,
+	// preventing duplicate entries (e.g. "glm-5.1" and "ocg/glm-5.1").
+	AutoPrefixAliasFor string `json:"-"`
 }
 
 type availableModelsCacheEntry struct {
@@ -830,6 +838,15 @@ func (r *ModelRegistry) buildAvailableModelsLocked(handlerType string, now time.
 		}
 
 		if effectiveClients > 0 || (availableClients > 0 && (expiredClients > 0 || cooldownSuspended > 0) && otherSuspended == 0) {
+			// Hide the bare convenience twin emitted alongside a prefixed model
+			// (see applyModelPrefixes) when its prefixed counterpart is also
+			// registered. The bare ID stays routable; it is only suppressed from
+			// listings so the same model is not returned twice.
+			if registration.Info != nil && strings.TrimSpace(registration.Info.AutoPrefixAliasFor) != "" {
+				if modelID, ok := r.modelIDForRegistrationLocked(registration); ok && r.bareTwinSuppressibleLocked(modelID) {
+					continue
+				}
+			}
 			model := r.convertModelToMap(registration.Info, handlerType)
 			if model != nil {
 				models = append(models, model)
@@ -838,6 +855,54 @@ func (r *ModelRegistry) buildAvailableModelsLocked(handlerType string, now time.
 	}
 
 	return models, expiresAt
+}
+
+// modelIDForRegistrationLocked resolves the registry key (model ID) for a given
+// registration. The registration struct does not store its own ID, so we map
+// back through registration.Info. Callers must hold the registry lock.
+func (r *ModelRegistry) modelIDForRegistrationLocked(registration *ModelRegistration) (string, bool) {
+	if registration == nil || registration.Info == nil {
+		return "", false
+	}
+	id := strings.TrimSpace(registration.Info.ID)
+	if id == "" {
+		return "", false
+	}
+	return id, true
+}
+
+// bareTwinSuppressibleLocked reports whether modelID is exclusively an
+// auto-generated bare alias of one or more prefixed models. It returns true
+// only when every client that registered modelID did so as an auto-prefix
+// twin (see applyModelPrefixes) and at least one of the prefixed counterparts
+// is still registered. A single genuinely unprefixed client (e.g. an OpenAI
+// model with no prefix configured) keeps the bare ID visible. Callers must hold
+// the registry lock.
+func (r *ModelRegistry) bareTwinSuppressibleLocked(modelID string) bool {
+	contributors := 0
+	targets := make([]string, 0, 2)
+	for _, infos := range r.clientModelInfos {
+		info := infos[modelID]
+		if info == nil {
+			continue
+		}
+		contributors++
+		alias := strings.TrimSpace(info.AutoPrefixAliasFor)
+		if alias == "" {
+			// A genuine, non-prefixed registration exists; never suppress.
+			return false
+		}
+		targets = append(targets, alias)
+	}
+	if contributors == 0 || len(targets) == 0 {
+		return false
+	}
+	for _, target := range targets {
+		if reg, ok := r.models[target]; ok && reg != nil {
+			return true
+		}
+	}
+	return false
 }
 
 func cloneModelMaps(models []map[string]any) []map[string]any {
