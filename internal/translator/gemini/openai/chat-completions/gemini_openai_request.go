@@ -171,6 +171,12 @@ func ConvertOpenAIRequestToGemini(modelName string, inputRawJSON []byte, _ bool)
 				node := []byte(`{"role":"user","parts":[]}`)
 				if content.Type == gjson.String {
 					node, _ = sjson.SetBytes(node, "parts.0.text", content.String())
+					p := 1
+					for _, ytURL := range common.ExtractYouTubeURLs(content.String()) {
+						node, _ = sjson.SetBytes(node, "parts."+itoa(p)+".fileData.fileUri", ytURL)
+						node, _ = sjson.SetBytes(node, "parts."+itoa(p)+".fileData.mimeType", "video/*")
+						p++
+					}
 				} else if content.IsArray() {
 					items := content.Array()
 					p := 0
@@ -182,6 +188,11 @@ func ConvertOpenAIRequestToGemini(modelName string, inputRawJSON []byte, _ bool)
 								node, _ = sjson.SetBytes(node, "parts."+itoa(p)+".text", text)
 							}
 							p++
+							for _, ytURL := range common.ExtractYouTubeURLs(text) {
+								node, _ = sjson.SetBytes(node, "parts."+itoa(p)+".fileData.fileUri", ytURL)
+								node, _ = sjson.SetBytes(node, "parts."+itoa(p)+".fileData.mimeType", "video/*")
+								p++
+							}
 						case "image_url":
 							imageURL := item.Get("image_url.url").String()
 							if len(imageURL) > 5 {

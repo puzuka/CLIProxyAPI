@@ -118,7 +118,7 @@ func ConvertOpenAIResponsesRequestToGemini(modelName string, inputRawJSON []byte
 
 			switch itemType {
 			case "message":
-				if strings.EqualFold(itemRole, "system") {
+				if strings.EqualFold(itemRole, "system") || strings.EqualFold(itemRole, "developer") {
 					if contentArray := item.Get("content"); contentArray.Exists() {
 						systemInstr := []byte(`{"parts":[]}`)
 						if systemInstructionResult := gjson.GetBytes(out, "systemInstruction"); systemInstructionResult.Exists() {
@@ -204,6 +204,13 @@ func ConvertOpenAIResponsesRequestToGemini(modelName string, inputRawJSON []byte
 							if text := contentItem.Get("text"); text.Exists() {
 								partJSON = []byte(`{"text":""}`)
 								partJSON, _ = sjson.SetBytes(partJSON, "text", text.String())
+								if contentType == "input_text" {
+									for _, ytURL := range common.ExtractYouTubeURLs(text.String()) {
+										fd := []byte(`{"fileData":{"mimeType":"video/*","fileUri":""}}`)
+										fd, _ = sjson.SetBytes(fd, "fileData.fileUri", ytURL)
+										currentParts = append(currentParts, fd)
+									}
+								}
 							}
 						case "input_image":
 							imageURL := contentItem.Get("image_url").String()
