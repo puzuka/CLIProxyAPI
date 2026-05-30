@@ -452,13 +452,23 @@ func (h *OpenAIResponsesAPIHandler) Compact(c *gin.Context) {
 		cliCancel(errMsg.Error)
 		return
 	}
-	// Custom compact: when compact-fallback is disabled and custom-compact is
-	// enabled, perform LLM-based compaction through the proxy's own provider
-	// system instead of forwarding to a Codex compact endpoint.
-	if shouldApplyCustomCompact(h, modelName) {
+	// Capture the original model and input for trigger-log before the
+	// fallback rewrites them. Custom compact must also use the original
+	// request payload if Codex compact fallback is unavailable or fails.
+	originalModelForLog := modelName
+	inputForLog := rawJSON
+
+	runCustomCompact := func(reason string) bool {
+		if !shouldApplyCustomCompact(h, originalModelForLog) {
+			return false
+		}
+		customCompactModel := customCompactModelForRequest(h, originalModelForLog)
+		if reason != "" {
+			log.Warnf("%s; falling back to custom compact model %s", reason, customCompactModel)
+		}
 		customCompactStart := time.Now()
 		stopKeepAlive := h.StartNonStreamingKeepAlive(c, cliCtx)
-		compactResp, err := executeCustomCompact(h, cliCtx, modelName, rawJSON)
+		compactResp, err := executeCustomCompact(h, cliCtx, originalModelForLog, inputForLog)
 		stopKeepAlive()
 		customCompactDuration := time.Since(customCompactStart)
 		if err != nil {
@@ -470,20 +480,15 @@ func (h *OpenAIResponsesAPIHandler) Compact(c *gin.Context) {
 				},
 			})
 			cliCancel(err.Error())
-			return
+			return true
 		}
 		// Trigger-log: async write of custom compact input/output when enabled.
-		asyncCustomCompactTriggerLog(h.Cfg, modelName, h.Cfg.CustomCompact.Model, rawJSON, compactResp, customCompactDuration)
+		asyncCustomCompactTriggerLog(h.Cfg, originalModelForLog, customCompactModel, inputForLog, compactResp, customCompactDuration)
 		c.Header("Content-Type", "application/json")
 		_, _ = c.Writer.Write(compactResp)
 		cliCancel()
-		return
+		return true
 	}
-
-	// Capture the original model and input for trigger-log before the
-	// fallback rewrites them.
-	originalModelForLog := modelName
-	inputForLog := rawJSON
 
 	fallbackApplied := false
 	if rewritten, newModel, applied := applyCompactModelFallback(h, modelName, rawJSON); applied {
@@ -491,12 +496,24 @@ func (h *OpenAIResponsesAPIHandler) Compact(c *gin.Context) {
 		modelName = newModel
 		fallbackApplied = applied
 	}
+	if !fallbackApplied {
+		reason := ""
+		if h.Cfg != nil && h.Cfg.CompactFallback.Enabled {
+			reason = fmt.Sprintf("compact fallback unavailable for %s", originalModelForLog)
+		}
+		if runCustomCompact(reason) {
+			return
+		}
+	}
 	compactStart := time.Now()
 	stopKeepAlive := h.StartNonStreamingKeepAlive(c, cliCtx)
 	resp, upstreamHeaders, errMsg := h.ExecuteWithAuthManager(cliCtx, h.HandlerType(), modelName, rawJSON, "responses/compact")
 	stopKeepAlive()
 	compactDuration := time.Since(compactStart)
 	if errMsg != nil {
+		if fallbackApplied && runCustomCompact(fmt.Sprintf("compact fallback failed for %s -> %s: %s", originalModelForLog, modelName, errMsg.Error)) {
+			return
+		}
 		h.WriteErrorResponse(c, errMsg)
 		cliCancel(errMsg.Error)
 		return

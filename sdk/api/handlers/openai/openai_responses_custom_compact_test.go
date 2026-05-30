@@ -83,7 +83,7 @@ func (e *customCompactLLMExecutor) HttpRequest(context.Context, *coreauth.Auth, 
 // validCustomCompactOutput returns a text that satisfies all required handoff sections.
 func validCustomCompactOutput() string {
 	return `Current task: Implementing custom compact feature for CLIProxy
-User intent: Add LLM-based context compaction when Codex compact fallback is disabled
+User intent: Add LLM-based context compaction when Codex compact fallback is disabled or unavailable
 Repo / location: /Users/test/Projects/CLIProxy
 Current state: Configuration and handler changes in progress
 Important files:
@@ -95,7 +95,7 @@ Changes already made:
 Known verification: All existing compact tests pass
 Unfinished work: Integration tests and documentation update
 Next action: Run the full test suite to verify custom compact works end-to-end
-Do not do: Do not modify the existing compact-fallback behavior when it is enabled`
+Do not do: Do not bypass successful Codex compact fallback`
 }
 
 // TestCustomCompactActivatesWhenFallbackDisabled verifies that when
@@ -201,7 +201,7 @@ func TestCustomCompactActivatesWhenFallbackDisabled(t *testing.T) {
 }
 
 // TestCustomCompactSkippedWhenFallbackEnabled verifies that when
-// compact-fallback is enabled, custom compact is NOT used even if
+// compact-fallback succeeds, custom compact is NOT used even if
 // custom-compact is also enabled.
 func TestCustomCompactSkippedWhenFallbackEnabled(t *testing.T) {
 	gin.SetMode(gin.TestMode)
@@ -251,7 +251,125 @@ func TestCustomCompactSkippedWhenFallbackEnabled(t *testing.T) {
 		t.Fatalf("codex executor calls = %d, want 1 (compact fallback should be used)", codexExecutor.calls)
 	}
 	if compatExecutor.calls != 0 {
-		t.Fatalf("compat executor calls = %d, want 0 (custom compact should NOT fire when fallback is enabled)", compatExecutor.calls)
+		t.Fatalf("compat executor calls = %d, want 0 (custom compact should NOT fire when fallback succeeds)", compatExecutor.calls)
+	}
+}
+
+// TestCustomCompactRunsWhenFallbackEnabledButNoCodexAuth verifies the secondary
+// fallback path: compact-fallback is enabled, but no Codex auth/model is
+// registered, so the request falls through to custom compact instead of the
+// original provider's /responses/compact path.
+func TestCustomCompactRunsWhenFallbackEnabledButNoCodexAuth(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	compatExecutor := &customCompactLLMExecutor{provider: "openai-compatibility"}
+	manager := coreauth.NewManager(nil, nil, nil)
+	manager.RegisterExecutor(compatExecutor)
+
+	compatAuth := &coreauth.Auth{ID: "compat-auth-no-codex", Provider: compatExecutor.Identifier(), Status: coreauth.StatusActive}
+	if _, err := manager.Register(context.Background(), compatAuth); err != nil {
+		t.Fatalf("Register compat auth: %v", err)
+	}
+	registry.GetGlobalRegistry().RegisterClient(compatAuth.ID, compatAuth.Provider, []*registry.ModelInfo{{ID: "deepseek-v4-pro"}})
+	t.Cleanup(func() {
+		registry.GetGlobalRegistry().UnregisterClient(compatAuth.ID)
+	})
+
+	cfg := &sdkconfig.SDKConfig{}
+	cfg.CompactFallback.Enabled = true
+	cfg.CompactFallback.Model = "gpt-5.5" // no codex auth registered for this model
+	cfg.CompactFallback.AppliesToProviders = []string{"*"}
+	cfg.CustomCompact.Enabled = true
+	// Leave CustomCompact.Model empty: the default custom compact fallback
+	// uses the original requested model.
+	base := handlers.NewBaseAPIHandlers(cfg, manager)
+	h := NewOpenAIResponsesAPIHandler(base)
+	router := gin.New()
+	router.POST("/v1/responses/compact", h.Compact)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses/compact", strings.NewReader(`{"model":"deepseek-v4-pro","input":"hello"}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", resp.Code, http.StatusOK, resp.Body.String())
+	}
+	if compatExecutor.calls != 1 {
+		t.Fatalf("compat executor calls = %d, want 1 (custom compact should run)", compatExecutor.calls)
+	}
+	if compatExecutor.alt != "" {
+		t.Fatalf("compat executor alt = %q, want empty chat/completions alt", compatExecutor.alt)
+	}
+	if compatExecutor.model != "deepseek-v4-pro" {
+		t.Fatalf("custom compact model = %q, want original requested model", compatExecutor.model)
+	}
+	if !strings.Contains(resp.Body.String(), `"object":"response.compaction"`) || !strings.Contains(resp.Body.String(), `compaction_summary`) {
+		t.Fatalf("response should be response.compaction JSON; body=%s", resp.Body.String())
+	}
+}
+
+// TestCustomCompactRunsWhenCompactFallbackFails verifies that a runtime failure
+// from the Codex compact endpoint is not terminal when custom compact is
+// configured; the handler retries via /chat/completions.
+func TestCustomCompactRunsWhenCompactFallbackFails(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	codexExecutor := &providerCaptureExecutor{provider: "codex", err: errors.New("codex compact unavailable")}
+	compatExecutor := &customCompactLLMExecutor{provider: "openai-compatibility"}
+	manager := coreauth.NewManager(nil, nil, nil)
+	manager.RegisterExecutor(codexExecutor)
+	manager.RegisterExecutor(compatExecutor)
+
+	compatAuth := &coreauth.Auth{ID: "compat-auth-fallback-fail", Provider: compatExecutor.Identifier(), Status: coreauth.StatusActive}
+	codexAuth := &coreauth.Auth{ID: "codex-auth-fallback-fail", Provider: codexExecutor.Identifier(), Status: coreauth.StatusActive}
+	if _, err := manager.Register(context.Background(), compatAuth); err != nil {
+		t.Fatalf("Register compat auth: %v", err)
+	}
+	if _, err := manager.Register(context.Background(), codexAuth); err != nil {
+		t.Fatalf("Register codex auth: %v", err)
+	}
+	registry.GetGlobalRegistry().RegisterClient(compatAuth.ID, compatAuth.Provider, []*registry.ModelInfo{
+		{ID: "mimo-v2.5-pro"},
+		{ID: "deepseek-v4-pro"},
+	})
+	registry.GetGlobalRegistry().RegisterClient(codexAuth.ID, codexAuth.Provider, []*registry.ModelInfo{{ID: "gpt-5.5"}})
+	t.Cleanup(func() {
+		registry.GetGlobalRegistry().UnregisterClient(compatAuth.ID)
+		registry.GetGlobalRegistry().UnregisterClient(codexAuth.ID)
+	})
+
+	cfg := &sdkconfig.SDKConfig{}
+	cfg.CompactFallback.Enabled = true
+	cfg.CompactFallback.Model = "gpt-5.5"
+	cfg.CompactFallback.AppliesToProviders = []string{"*"}
+	cfg.CustomCompact.Enabled = true
+	cfg.CustomCompact.Model = "deepseek-v4-pro"
+	base := handlers.NewBaseAPIHandlers(cfg, manager)
+	h := NewOpenAIResponsesAPIHandler(base)
+	router := gin.New()
+	router.POST("/v1/responses/compact", h.Compact)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses/compact", strings.NewReader(`{"model":"mimo-v2.5-pro","input":"hello"}`))
+	req.Header.Set("Content-Type", "application/json")
+	resp := httptest.NewRecorder()
+	router.ServeHTTP(resp, req)
+
+	if resp.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", resp.Code, http.StatusOK, resp.Body.String())
+	}
+	if codexExecutor.calls != 1 {
+		t.Fatalf("codex executor calls = %d, want 1 (fallback should be attempted first)", codexExecutor.calls)
+	}
+	if compatExecutor.calls != 1 {
+		t.Fatalf("compat executor calls = %d, want 1 (custom compact should run after fallback failure)", compatExecutor.calls)
+	}
+	if compatExecutor.alt != "" {
+		t.Fatalf("compat executor alt = %q, want empty chat/completions alt", compatExecutor.alt)
+	}
+	if compatExecutor.model != "deepseek-v4-pro" {
+		t.Fatalf("custom compact model = %q, want deepseek-v4-pro", compatExecutor.model)
+	}
+	if !strings.Contains(resp.Body.String(), `compaction_summary`) {
+		t.Fatalf("response should include compaction summary; body=%s", resp.Body.String())
 	}
 }
 

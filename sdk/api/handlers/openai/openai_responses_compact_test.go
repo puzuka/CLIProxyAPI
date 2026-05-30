@@ -174,7 +174,6 @@ func TestOpenAIResponsesCompactDecodesZstdRequestBody(t *testing.T) {
 	}
 }
 
-
 // providerCaptureExecutor is a compact-aware test executor that records the
 // model field, the alt routing key, and the count of executions, scoped to a
 // single provider identifier. Two instances (one per provider) let tests
@@ -185,6 +184,7 @@ type providerCaptureExecutor struct {
 	model    string
 	alt      string
 	calls    int
+	err      error
 }
 
 func (e *providerCaptureExecutor) Identifier() string { return e.provider }
@@ -193,6 +193,9 @@ func (e *providerCaptureExecutor) Execute(ctx context.Context, auth *coreauth.Au
 	e.calls++
 	e.model = req.Model
 	e.alt = opts.Alt
+	if e.err != nil {
+		return coreexecutor.Response{}, e.err
+	}
 	return coreexecutor.Response{Payload: []byte(`{"ok":true}`)}, nil
 }
 
@@ -364,7 +367,6 @@ func TestCompactFallbackPreservesCodexNativeModel(t *testing.T) {
 	}
 }
 
-
 // TestCompactFallbackWildcardMatchesCustomCompatName verifies that real-world
 // OpenAI-compat configs (where compat.Name becomes the registered provider
 // identifier — e.g. "opencode-go") trigger the fallback when the operator uses
@@ -421,7 +423,6 @@ func TestCompactFallbackWildcardMatchesCustomCompatName(t *testing.T) {
 		t.Fatalf("codex received model = %q, want %q", codex.model, "gpt-5.5")
 	}
 }
-
 
 // TestCompactFallbackStripsReasoningItems verifies that when the fallback
 // fires the helper removes any "type":"reasoning" entries from the input
@@ -513,7 +514,6 @@ func (e *payloadCaptureExecutor) Execute(ctx context.Context, auth *coreauth.Aut
 	e.payload = append(e.payload[:0], req.Payload...)
 	return coreexecutor.Response{Payload: []byte(`{"ok":true}`)}, nil
 }
-
 
 // setUserAPIKeyMiddleware injects an API key into the gin context the way
 // the production auth middleware does, so apikeypolicy.CheckRequest can

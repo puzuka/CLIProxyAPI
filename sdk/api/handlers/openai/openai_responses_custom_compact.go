@@ -395,21 +395,19 @@ func validateCustomCompactOutput(text string) (ok bool, missing []string) {
 // shouldApplyCustomCompact reports whether the custom compact path should be
 // used for this request. It returns true when:
 //   - custom-compact.enabled is true
-//   - compact-fallback.enabled is false
-//   - custom-compact.model is non-empty
 //   - the requested model's providers match the custom compact criteria
 //     (i.e., the model is NOT already served by a Codex provider that handles
 //     compact natively)
+//
+// Custom compact is intentionally allowed even when compact-fallback is
+// enabled. The main handler tries Codex compact fallback first; if that
+// fallback is unavailable or fails, this path becomes the secondary fallback.
 func shouldApplyCustomCompact(h *OpenAIResponsesAPIHandler, modelName string) bool {
 	if h == nil || h.Cfg == nil {
 		return false
 	}
-	// Custom compact activates only when compact-fallback is disabled
-	if h.Cfg.CompactFallback.Enabled {
-		return false
-	}
 	cc := h.Cfg.CustomCompact
-	if !cc.Enabled || cc.Model == "" {
+	if !cc.Enabled {
 		return false
 	}
 	// Skip if the original model is already served by a Codex provider
@@ -421,6 +419,16 @@ func shouldApplyCustomCompact(h *OpenAIResponsesAPIHandler, modelName string) bo
 	return true
 }
 
+func customCompactModelForRequest(h *OpenAIResponsesAPIHandler, modelName string) string {
+	if h == nil || h.Cfg == nil {
+		return strings.TrimSpace(modelName)
+	}
+	if configured := strings.TrimSpace(h.Cfg.CustomCompact.Model); configured != "" {
+		return configured
+	}
+	return strings.TrimSpace(modelName)
+}
+
 // executeCustomCompact performs LLM-based context compaction:
 //  1. Extracts conversation from the compact request input (including instructions and tools)
 //  2. Builds a system + user prompt for the LLM
@@ -430,7 +438,10 @@ func shouldApplyCustomCompact(h *OpenAIResponsesAPIHandler, modelName string) bo
 //     preserved developer/user messages and a compaction_summary item
 func executeCustomCompact(h *OpenAIResponsesAPIHandler, cliCtx context.Context, modelName string, rawJSON []byte) ([]byte, error) {
 	cc := h.Cfg.CustomCompact
-	compactModel := cc.Model
+	compactModel := customCompactModelForRequest(h, modelName)
+	if compactModel == "" {
+		return nil, fmt.Errorf("custom compact: no model configured and request model is empty")
+	}
 	maxRetries := cc.EffectiveMaxRetries()
 	maxTokens := cc.EffectiveMaxTokens()
 	temperature := cc.EffectiveTemperature()

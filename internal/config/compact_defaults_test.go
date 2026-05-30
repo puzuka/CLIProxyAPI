@@ -32,7 +32,13 @@ func TestConfigExampleEnablesCompactFallbackByDefault(t *testing.T) {
 	if !cfg.CompactFallback.TriggerLog {
 		t.Fatal("CompactFallback.TriggerLog = false, want true")
 	}
-	if cfg.CustomCompact.Enabled {
-		t.Fatal("CustomCompact.Enabled = true, want false")
+	if !cfg.CustomCompact.Enabled {
+		t.Fatal("CustomCompact.Enabled = false, want true")
+	}
+	if cfg.CustomCompact.Model != "" {
+		t.Fatalf("CustomCompact.Model = %q, want empty default to use request model", cfg.CustomCompact.Model)
+	}
+	if !cfg.CustomCompact.TriggerLog {
+		t.Fatal("CustomCompact.TriggerLog = false, want true")
 	}
 }

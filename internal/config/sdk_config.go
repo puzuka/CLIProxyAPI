@@ -127,8 +127,8 @@ func (c GuidelineInjectionConfig) EffectivePosition() string {
 // requests when the originating model's provider cannot serve the Codex compact
 // endpoint. The substitution is purely an upstream-routing rewrite: response data
 // is still returned to the caller verbatim. The fallback is skipped when no Codex
-// auth is registered for the substitute model so callers never see a routing error
-// they cannot remediate themselves.
+// auth is registered for the substitute model; callers can then fall through to
+// CustomCompact when it is enabled.
 type CompactFallbackConfig struct {
 	// Enabled toggles the compact fallback behavior. Default false.
 	Enabled bool `yaml:"enabled" json:"enabled"`
@@ -154,18 +154,19 @@ type CompactFallbackConfig struct {
 }
 
 // CustomCompactConfig configures LLM-based context compaction for
-// /v1/responses/compact requests. When enabled (and compact-fallback is
-// disabled), the proxy does not forward the compact request to a Codex
-// endpoint. Instead it extracts the conversation from the compact input,
-// builds a summarization prompt, calls /chat/completions with the configured
-// model through the proxy's own provider system, and wraps the LLM output
-// in the Responses API compact response format.
+// /v1/responses/compact requests. When enabled, it is used when
+// compact-fallback is disabled, unavailable, or fails. The proxy extracts the
+// conversation from the compact input, builds a summarization prompt, calls
+// /chat/completions with the configured model (or the original requested model
+// when Model is empty) through the proxy's own provider system, and wraps the
+// LLM output in the Responses API compact response format.
 type CustomCompactConfig struct {
 	// Enabled toggles custom compact. Default false.
 	Enabled bool `yaml:"enabled" json:"enabled"`
 
 	// Model is the model name to use for the LLM compaction call (e.g.
-	// "deepseek-v4-pro"). Must be any model registered in CLIProxy.
+	// "deepseek-v4-pro"). When empty, the original requested model is used.
+	// When set, it must be any model registered in CLIProxy.
 	Model string `yaml:"model" json:"model"`
 
 	// MaxTokens limits the LLM response length. Default 4096.

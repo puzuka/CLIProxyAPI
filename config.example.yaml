@@ -213,9 +213,14 @@ compact-fallback:
     - "*"
   trigger-log: true
 
-# Keep LLM-based custom compact disabled while compact-fallback is active.
+# Secondary fallback when Codex compact is unavailable or fails.
+# Leave model empty to compact with the original requested model via /chat/completions.
 custom-compact:
-  enabled: false
+  enabled: true
+  max-tokens: 4096
+  temperature: 0.2
+  max-retries: 1
+  trigger-log: true
 
 # Signature cache validation for thinking blocks (Antigravity/Claude).
 # When true (default), cached signatures are preferred and validated.
