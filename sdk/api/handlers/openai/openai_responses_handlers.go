@@ -14,10 +14,11 @@ import (
 	"io"
 	"net/http"
 	"sort"
+	"time"
 
 	"github.com/gin-gonic/gin"
-	. "github.com/router-for-me/CLIProxyAPI/v7/internal/constant"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/apikeypolicy"
+	. "github.com/router-for-me/CLIProxyAPI/v7/internal/constant"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/guideline"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/interfaces"
 	"github.com/router-for-me/CLIProxyAPI/v7/internal/registry"
@@ -451,17 +452,59 @@ func (h *OpenAIResponsesAPIHandler) Compact(c *gin.Context) {
 		cliCancel(errMsg.Error)
 		return
 	}
+	// Custom compact: when compact-fallback is disabled and custom-compact is
+	// enabled, perform LLM-based compaction through the proxy's own provider
+	// system instead of forwarding to a Codex compact endpoint.
+	if shouldApplyCustomCompact(h, modelName) {
+		customCompactStart := time.Now()
+		stopKeepAlive := h.StartNonStreamingKeepAlive(c, cliCtx)
+		compactResp, err := executeCustomCompact(h, cliCtx, modelName, rawJSON)
+		stopKeepAlive()
+		customCompactDuration := time.Since(customCompactStart)
+		if err != nil {
+			log.Warnf("custom compact failed: %v", err)
+			c.JSON(http.StatusBadGateway, handlers.ErrorResponse{
+				Error: handlers.ErrorDetail{
+					Message: fmt.Sprintf("Custom compact failed: %v", err),
+					Type:    "custom_compact_error",
+				},
+			})
+			cliCancel(err.Error())
+			return
+		}
+		// Trigger-log: async write of custom compact input/output when enabled.
+		asyncCustomCompactTriggerLog(h.Cfg, modelName, h.Cfg.CustomCompact.Model, rawJSON, compactResp, customCompactDuration)
+		c.Header("Content-Type", "application/json")
+		_, _ = c.Writer.Write(compactResp)
+		cliCancel()
+		return
+	}
+
+	// Capture the original model and input for trigger-log before the
+	// fallback rewrites them.
+	originalModelForLog := modelName
+	inputForLog := rawJSON
+
+	fallbackApplied := false
 	if rewritten, newModel, applied := applyCompactModelFallback(h, modelName, rawJSON); applied {
 		rawJSON = rewritten
 		modelName = newModel
+		fallbackApplied = applied
 	}
+	compactStart := time.Now()
 	stopKeepAlive := h.StartNonStreamingKeepAlive(c, cliCtx)
 	resp, upstreamHeaders, errMsg := h.ExecuteWithAuthManager(cliCtx, h.HandlerType(), modelName, rawJSON, "responses/compact")
 	stopKeepAlive()
+	compactDuration := time.Since(compactStart)
 	if errMsg != nil {
 		h.WriteErrorResponse(c, errMsg)
 		cliCancel(errMsg.Error)
 		return
+	}
+	// Trigger-log: async write of compact input/output when enabled and
+	// the compact-fallback path was used.
+	if fallbackApplied {
+		asyncCompactTriggerLog(h.Cfg, originalModelForLog, modelName, inputForLog, resp, compactDuration)
 	}
 	handlers.WriteUpstreamHeaders(c.Writer.Header(), upstreamHeaders)
 	_, _ = c.Writer.Write(resp)

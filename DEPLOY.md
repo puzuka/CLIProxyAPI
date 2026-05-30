@@ -400,3 +400,147 @@ streaming:
   keepalive-seconds: 15
   bootstrap-retries: 1
 ```
+
+## Context Compaction
+
+Codex CLI sends `POST /v1/responses/compact` to compress conversation context when a session runs long. By default, only Codex-native models handle this endpoint; other providers return `501 Not Implemented`. Two config blocks let you route compact requests differently.
+
+### Option A: Compact Fallback (route through Codex)
+
+Rewrites the model field so the request is forwarded to the Codex compact endpoint (`chatgpt.com/backend-api/codex/responses/compact`). Requires at least one active Codex auth.
+
+```yaml
+compact-fallback:
+  enabled: true
+  model: "gpt-5.5"                           # must resolve to a codex provider
+  applies-to-providers: ["openai-compatibility"]  # or ["*"] for all non-codex
+  trigger-log: true                           # optional: log compact I/O to logs/
+```
+
+| Field | Description |
+|---|---|
+| `enabled` | Toggle. Default `false`. |
+| `model` | Codex-capable substitute model (e.g. `gpt-5.5`). Must have an active Codex auth registered. |
+| `applies-to-providers` | Provider identifiers that trigger the fallback. `["*"]` or `[]` matches every non-Codex provider. |
+| `trigger-log` | When `true`, each compact-fallback call writes a private JSON log file (`logs/compact-*.log`, mode `0600`) containing the request input and response output. The write happens in a background goroutine and never affects compact speed or correctness. Default `false`. |
+
+**When to use:** You have Codex credentials and want compact to be handled by OpenAI's native compaction service regardless of which model the client is using.
+
+**Behavior:**
+1. Client requests compact for a non-Codex model (e.g. `deepseek-v4-pro`)
+2. Proxy rewrites the model to `gpt-5.5`, strips provider-specific reasoning items
+3. Request is forwarded to the Codex executor which calls the upstream compact endpoint
+4. Response is returned to the client verbatim
+5. If `trigger-log: true`, a background goroutine writes the request input and response output to `logs/compact-<timestamp>.log`
+
+### Option B: Custom Compact (LLM-based, no Codex dependency)
+
+When compact-fallback is disabled, the proxy can perform compaction locally by calling any model registered in CLIProxy via `/chat/completions`. The proxy extracts the conversation, sends it to the LLM with a structured summarization prompt, validates the output, and wraps the result in the Responses API compact format.
+
+```yaml
+compact-fallback:
+  enabled: false          # must be false for custom compact to activate
+
+custom-compact:
+  enabled: true
+  model: "deepseek-v4-pro"   # any model registered in CLIProxy
+  max-tokens: 4096            # optional, default 4096
+  temperature: 0.2            # optional, default 0.2
+  max-retries: 1              # optional, default 1
+  trigger-log: true           # optional: log compact I/O to logs/
+```
+
+| Field | Description |
+|---|---|
+| `enabled` | Toggle. Default `false`. |
+| `model` | Any model registered in CLIProxy. The LLM call goes through the proxy's own provider system (auth, load balancing, proxy config). |
+| `max-tokens` | Maximum tokens for the LLM response. Default `4096`. |
+| `temperature` | Sampling temperature. Lower = more deterministic. Default `0.2`. |
+| `max-retries` | Retry attempts when the LLM output is missing required sections. Default `1`. |
+| `trigger-log` | When `true`, each custom compact call writes a private JSON log file (`logs/compact-*.log`, mode `0600`) containing the request input and response output. The write happens in a background goroutine. Default `false`. |
+
+**When to use:** You do not have Codex credentials, or you want to compact with a specific model (e.g. a local or third-party model) without depending on OpenAI's compact endpoint.
+
+**Behavior:**
+1. Client requests compact for any non-Codex model
+2. Proxy extracts the full compact payload: top-level `instructions` (system prompt, truncated), `tools` (tool names), and `input` array (messages, function calls with 4K-char truncation, function outputs)
+3. Proxy calls `/chat/completions` with the configured model and a structured handoff prompt
+4. Output is validated for 10 required sections (Current task, User intent, Next action, etc.)
+5. If validation fails, the proxy retries with feedback; on the last attempt the output is accepted as-is
+6. The LLM text is wrapped in `response.compaction` format: preserved developer/user messages + `compaction_summary` item (matches Codex native compact output)
+
+### Priority Order
+
+When a compact request arrives, the proxy evaluates in this order:
+
+1. **Codex-native** — the requested model belongs to a Codex provider → use native compact (no rewrite)
+2. **Compact fallback** — `compact-fallback.enabled: true` → rewrite model, route to Codex
+3. **Custom compact** — `custom-compact.enabled: true` → LLM-based compaction via `/chat/completions`
+4. **Passthrough** — none of the above → forward to original provider's executor (usually returns `501`)
+
+### Examples
+
+**Use Codex compact for all non-Codex models (with logging):**
+```yaml
+compact-fallback:
+  enabled: true
+  model: "gpt-5.5"
+  applies-to-providers: ["*"]
+  trigger-log: true
+```
+
+**Use deepseek for compact (no Codex needed, with logging):**
+```yaml
+compact-fallback:
+  enabled: false
+
+custom-compact:
+  enabled: true
+  model: "deepseek-v4-pro"
+  trigger-log: true
+```
+
+**Use a specific model with tuned parameters:**
+```yaml
+compact-fallback:
+  enabled: false
+
+custom-compact:
+  enabled: true
+  model: "qwen-3-coder"
+  max-tokens: 8192
+  temperature: 0.1
+  max-retries: 2
+```
+
+**Disable both (compact returns 501 for non-Codex models):**
+```yaml
+compact-fallback:
+  enabled: false
+
+custom-compact:
+  enabled: false
+```
+
+### Verifying Compact Works
+
+```bash
+# Test compact endpoint with a simple request
+curl -s -X POST http://localhost:8317/v1/responses/compact \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <your-api-key>" \
+  -d '{
+    "model": "deepseek-v4-pro",
+    "input": [
+      {"type":"message","role":"user","content":[{"type":"input_text","text":"Fix the login bug in auth.go"}]},
+      {"type":"message","role":"assistant","content":[{"type":"output_text","text":"I found the issue in line 42..."}]}
+    ]
+  }' | jq .
+
+# Expected: 200 with a response containing output[0].content[0].text
+# with structured handoff sections (Current task, User intent, etc.)
+
+# Check logs for compact activity
+grep "custom compact" logs/stdout.log
+grep "compact fallback" logs/stdout.log
+```
