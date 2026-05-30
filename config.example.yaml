@@ -70,7 +70,7 @@ pprof:
 commercial-mode: false
 
 # When true, write application logs to rotating files instead of stdout
-logging-to-file: false
+logging-to-file: true
 
 # Maximum total size (MB) of log files under the logs directory. When exceeded, the oldest log
 # files are deleted until within the limit. Set to 0 to disable.
@@ -203,6 +203,24 @@ nonstream-keepalive-interval: 0
 streaming:
   keepalive-seconds: 15   # Default: 15. <= 0 disables keep-alives.
   bootstrap-retries: 1    # Default: 0 (disabled). Retries before first byte is sent.
+
+# Route /v1/responses/compact for non-Codex providers through Codex by default.
+# Requires at least one active Codex auth for the configured model.
+compact-fallback:
+  enabled: true
+  model: "gpt-5.5"
+  applies-to-providers:
+    - "*"
+  trigger-log: true
+
+# Secondary fallback when Codex compact is unavailable or fails.
+# Leave model empty to compact with the original requested model via /chat/completions.
+custom-compact:
+  enabled: true
+  max-tokens: 4096
+  temperature: 0.2
+  max-retries: 1
+  trigger-log: true
 
 # Signature cache validation for thinking blocks (Antigravity/Claude).
 # When true (default), cached signatures are preferred and validated.

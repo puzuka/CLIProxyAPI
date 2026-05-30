@@ -7,9 +7,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"sync"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -149,7 +149,7 @@ func (e *triggerLogCaptureExecutor) HttpRequest(context.Context, *coreauth.Auth,
 }
 
 // TestCompactFallbackTriggerLogWritesFile exercises the full handler path:
-// compact-fallback with trigger-log=true should write a JSON file to logs/.
+// compact-fallback with trigger-log=true should write a private JSON log file to logs/.
 func TestCompactFallbackTriggerLogWritesFile(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -213,7 +213,7 @@ func TestCompactFallbackTriggerLogWritesFile(t *testing.T) {
 	// Wait briefly for the async goroutine to finish writing.
 	time.Sleep(100 * time.Millisecond)
 
-	// Check that a compact-*.json file was created in logs/
+	// Check that a compact-*.log file was created in logs/
 	logDir := filepath.Join(tmpDir, "logs")
 	entries, err := os.ReadDir(logDir)
 	if err != nil {
@@ -221,9 +221,16 @@ func TestCompactFallbackTriggerLogWritesFile(t *testing.T) {
 	}
 	found := false
 	for _, entry := range entries {
-		if strings.HasPrefix(entry.Name(), "compact-") && strings.HasSuffix(entry.Name(), ".json") {
+		if strings.HasPrefix(entry.Name(), "compact-") && strings.HasSuffix(entry.Name(), ".log") {
 			found = true
 			// Verify the file contains valid JSON with expected fields
+			info, infoErr := entry.Info()
+			if infoErr != nil {
+				t.Fatalf("stat log file: %v", infoErr)
+			}
+			if got := info.Mode().Perm(); got != compactTriggerLogFileMode {
+				t.Fatalf("log file mode = %o, want %o", got, compactTriggerLogFileMode)
+			}
 			data, readErr := os.ReadFile(filepath.Join(logDir, entry.Name()))
 			if readErr != nil {
 				t.Fatalf("read log file: %v", readErr)
@@ -251,7 +258,7 @@ func TestCompactFallbackTriggerLogWritesFile(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatalf("no compact-*.json file found in %s; entries=%v", logDir, entries)
+		t.Fatalf("no compact-*.log file found in %s; entries=%v", logDir, entries)
 	}
 }
 
@@ -380,7 +387,7 @@ func TestCustomCompactTriggerLogWritesFile(t *testing.T) {
 	// Wait briefly for the async goroutine to finish writing.
 	time.Sleep(100 * time.Millisecond)
 
-	// Check that a compact-*.json file was created in logs/
+	// Check that a compact-*.log file was created in logs/
 	logDir := filepath.Join(tmpDir, "logs")
 	entries, err := os.ReadDir(logDir)
 	if err != nil {
@@ -388,8 +395,15 @@ func TestCustomCompactTriggerLogWritesFile(t *testing.T) {
 	}
 	found := false
 	for _, entry := range entries {
-		if strings.HasPrefix(entry.Name(), "compact-") && strings.HasSuffix(entry.Name(), ".json") {
+		if strings.HasPrefix(entry.Name(), "compact-") && strings.HasSuffix(entry.Name(), ".log") {
 			found = true
+			info, infoErr := entry.Info()
+			if infoErr != nil {
+				t.Fatalf("stat log file: %v", infoErr)
+			}
+			if got := info.Mode().Perm(); got != compactTriggerLogFileMode {
+				t.Fatalf("log file mode = %o, want %o", got, compactTriggerLogFileMode)
+			}
 			data, readErr := os.ReadFile(filepath.Join(logDir, entry.Name()))
 			if readErr != nil {
 				t.Fatalf("read log file: %v", readErr)
@@ -417,7 +431,7 @@ func TestCustomCompactTriggerLogWritesFile(t *testing.T) {
 		}
 	}
 	if !found {
-		t.Fatalf("no compact-*.json file found in %s; entries=%v", logDir, entries)
+		t.Fatalf("no compact-*.log file found in %s; entries=%v", logDir, entries)
 	}
 }
 

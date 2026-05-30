@@ -403,7 +403,7 @@ streaming:
 
 ## Context Compaction
 
-Codex CLI sends `POST /v1/responses/compact` to compress conversation context when a session runs long. By default, only Codex-native models handle this endpoint; other providers return `501 Not Implemented`. Two config blocks let you route compact requests differently.
+Codex CLI sends `POST /v1/responses/compact` to compress conversation context when a session runs long. Without compact routing configured, only Codex-native models handle this endpoint and other providers return `501 Not Implemented`. The shipped `config.example.yaml` enables a two-stage fallback by default: try Codex compact first when a Codex auth is available, then fall back to LLM-based custom compact if Codex compact is unavailable or fails.
 
 ### Option A: Compact Fallback (route through Codex)
 
@@ -412,38 +412,40 @@ Rewrites the model field so the request is forwarded to the Codex compact endpoi
 ```yaml
 compact-fallback:
   enabled: true
-  model: "gpt-5.5"                           # must resolve to a codex provider
+  model: "gpt-5.5"                           # any compact-capable model served by a codex provider
   applies-to-providers: ["openai-compatibility"]  # or ["*"] for all non-codex
   trigger-log: true                           # optional: log compact I/O to logs/
 ```
 
 | Field | Description |
 |---|---|
-| `enabled` | Toggle. Default `false`. |
-| `model` | Codex-capable substitute model (e.g. `gpt-5.5`). Must have an active Codex auth registered. |
+| `enabled` | Toggle. Zero-value default is `false` when omitted; the shipped default config sets it to `true`. |
+| `model` | Codex-capable substitute model (e.g. `gpt-5.5`). Any compact-capable model is valid as long as it resolves to an active Codex auth. |
 | `applies-to-providers` | Provider identifiers that trigger the fallback. `["*"]` or `[]` matches every non-Codex provider. |
-| `trigger-log` | When `true`, each compact-fallback call writes a JSON log file (`logs/compact-*.json`) containing the request input and response output. The write happens in a background goroutine and never affects compact speed or correctness. Default `false`. |
+| `trigger-log` | When `true`, each compact-fallback call writes a private JSON log file (`logs/compact-*.log`, mode `0600`) containing the request input and response output. The write happens in a background goroutine and never affects compact speed or correctness. Zero-value default is `false` when omitted; the shipped default config sets it to `true`. |
 
 **When to use:** You have Codex credentials and want compact to be handled by OpenAI's native compaction service regardless of which model the client is using.
 
 **Behavior:**
 1. Client requests compact for a non-Codex model (e.g. `deepseek-v4-pro`)
-2. Proxy rewrites the model to `gpt-5.5`, strips provider-specific reasoning items
+2. Proxy rewrites the model to the configured Codex compact model (for example `gpt-5.5`), strips provider-specific reasoning items
 3. Request is forwarded to the Codex executor which calls the upstream compact endpoint
 4. Response is returned to the client verbatim
-5. If `trigger-log: true`, a background goroutine writes the request input and response output to `logs/compact-<timestamp>.json`
+5. If Codex auth is missing or the Codex compact call fails, the handler falls through to custom compact when `custom-compact.enabled: true`
+6. If `trigger-log: true`, a background goroutine writes the request input and response output to `logs/compact-<timestamp>.log`
 
-### Option B: Custom Compact (LLM-based, no Codex dependency)
+### Option B: Custom Compact (LLM-based secondary fallback)
 
-When compact-fallback is disabled, the proxy can perform compaction locally by calling any model registered in CLIProxy via `/chat/completions`. The proxy extracts the conversation, sends it to the LLM with a structured summarization prompt, validates the output, and wraps the result in the Responses API compact format.
+When compact-fallback is disabled, unavailable, or fails, the proxy can perform compaction locally by calling any model registered in CLIProxy via `/chat/completions`. The proxy extracts the conversation, sends it to the LLM with a structured summarization prompt, validates the output, and wraps the result in the Responses API compact format.
 
 ```yaml
 compact-fallback:
-  enabled: false          # must be false for custom compact to activate
+  enabled: true           # custom compact is used if this is unavailable or fails
 
 custom-compact:
   enabled: true
-  model: "deepseek-v4-pro"   # any model registered in CLIProxy
+  # model omitted: use the original requested model via /chat/completions
+  # model: "deepseek-v4-pro" # optional: force any model registered in CLIProxy
   max-tokens: 4096            # optional, default 4096
   temperature: 0.2            # optional, default 0.2
   max-retries: 1              # optional, default 1
@@ -453,11 +455,11 @@ custom-compact:
 | Field | Description |
 |---|---|
 | `enabled` | Toggle. Default `false`. |
-| `model` | Any model registered in CLIProxy. The LLM call goes through the proxy's own provider system (auth, load balancing, proxy config). |
+| `model` | Optional. When empty, custom compact uses the original requested model via `/chat/completions`. When set, it can be any model registered in CLIProxy. The LLM call goes through the proxy's own provider system (auth, load balancing, proxy config). |
 | `max-tokens` | Maximum tokens for the LLM response. Default `4096`. |
 | `temperature` | Sampling temperature. Lower = more deterministic. Default `0.2`. |
 | `max-retries` | Retry attempts when the LLM output is missing required sections. Default `1`. |
-| `trigger-log` | When `true`, each custom compact call writes a JSON log file (`logs/compact-*.json`) containing the request input and response output. The write happens in a background goroutine. Default `false`. |
+| `trigger-log` | When `true`, each custom compact call writes a private JSON log file (`logs/compact-*.log`, mode `0600`) containing the request input and response output. The write happens in a background goroutine. Default `false`. |
 
 **When to use:** You do not have Codex credentials, or you want to compact with a specific model (e.g. a local or third-party model) without depending on OpenAI's compact endpoint.
 
@@ -475,7 +477,7 @@ When a compact request arrives, the proxy evaluates in this order:
 
 1. **Codex-native** — the requested model belongs to a Codex provider → use native compact (no rewrite)
 2. **Compact fallback** — `compact-fallback.enabled: true` → rewrite model, route to Codex
-3. **Custom compact** — `custom-compact.enabled: true` → LLM-based compaction via `/chat/completions`
+3. **Custom compact** — `custom-compact.enabled: true` → LLM-based compaction via `/chat/completions` when Codex fallback is disabled, unavailable, or fails
 4. **Passthrough** — none of the above → forward to original provider's executor (usually returns `501`)
 
 ### Examples
@@ -486,6 +488,19 @@ compact-fallback:
   enabled: true
   model: "gpt-5.5"
   applies-to-providers: ["*"]
+  trigger-log: true
+```
+
+**Default two-stage fallback (Codex first, then original model via chat):**
+```yaml
+compact-fallback:
+  enabled: true
+  model: "gpt-5.5"
+  applies-to-providers: ["*"]
+  trigger-log: true
+
+custom-compact:
+  enabled: true
   trigger-log: true
 ```
 

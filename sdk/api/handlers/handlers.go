@@ -582,15 +582,23 @@ func (h *BaseAPIHandler) CheckAPIKeyPolicy(ctx context.Context, handlerType, mod
 // ExecuteWithAuthManager executes a non-streaming request via the core auth manager.
 // This path is the only supported execution route.
 func (h *BaseAPIHandler) ExecuteWithAuthManager(ctx context.Context, handlerType, modelName string, rawJSON []byte, alt string) ([]byte, http.Header, *interfaces.ErrorMessage) {
-	return h.executeWithAuthManager(ctx, handlerType, modelName, rawJSON, alt, false)
+	return h.executeWithAuthManager(ctx, handlerType, modelName, rawJSON, alt, false, false)
 }
 
 // ExecuteImageWithAuthManager executes an OpenAI-compatible image endpoint request.
 func (h *BaseAPIHandler) ExecuteImageWithAuthManager(ctx context.Context, handlerType, modelName string, rawJSON []byte, alt string) ([]byte, http.Header, *interfaces.ErrorMessage) {
-	return h.executeWithAuthManager(ctx, handlerType, modelName, rawJSON, alt, true)
+	return h.executeWithAuthManager(ctx, handlerType, modelName, rawJSON, alt, true, false)
 }
 
-func (h *BaseAPIHandler) executeWithAuthManager(ctx context.Context, handlerType, modelName string, rawJSON []byte, alt string, allowImageModel bool) ([]byte, http.Header, *interfaces.ErrorMessage) {
+// ExecuteInternalWithAuthManager executes an operator-owned internal request
+// after the caller has already enforced API-key policy on the user-facing
+// request. It still resolves the configured model through the normal auth
+// manager, but it skips caller policy checks against the internal service model.
+func (h *BaseAPIHandler) ExecuteInternalWithAuthManager(ctx context.Context, handlerType, modelName string, rawJSON []byte, alt string) ([]byte, http.Header, *interfaces.ErrorMessage) {
+	return h.executeWithAuthManager(ctx, handlerType, modelName, rawJSON, alt, false, true)
+}
+
+func (h *BaseAPIHandler) executeWithAuthManager(ctx context.Context, handlerType, modelName string, rawJSON []byte, alt string, allowImageModel bool, skipAPIKeyPolicy bool) ([]byte, http.Header, *interfaces.ErrorMessage) {
 	providers, normalizedModel, errMsg := h.getRequestDetailsWithOptions(modelName, allowImageModel)
 	if errMsg != nil {
 		return nil, nil, errMsg
@@ -602,7 +610,7 @@ func (h *BaseAPIHandler) executeWithAuthManager(ctx context.Context, handlerType
 	// the proxy's internal fallback target. The Compact handler pre-checks the
 	// policy on the original requested model, so we skip the duplicate check
 	// here for that alt only.
-	if alt != "responses/compact" {
+	if !skipAPIKeyPolicy && alt != "responses/compact" {
 		providers, errMsg = apikeypolicy.CheckRequest(h.Cfg, apiKeyFromContext(ctx), handlerType, providers, modelName, normalizedModel, time.Now())
 		if errMsg != nil {
 			return nil, nil, errMsg

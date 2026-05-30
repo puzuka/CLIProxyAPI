@@ -16,15 +16,19 @@ import (
 // Resolved relative to the working directory.
 const compactLogDir = "logs"
 
+// compactTriggerLogFileMode keeps compact trigger logs private to the runtime
+// user because they may contain prompts, tool outputs, and compact summaries.
+const compactTriggerLogFileMode = 0o600
+
 // compactLogEntry is the JSON structure written for each compact trigger-log event.
 type compactLogEntry struct {
-	Timestamp    string          `json:"timestamp"`
-	Type         string          `json:"type"`          // "compact_fallback"
-	RequestModel string          `json:"request_model"` // original model requested by the client
-	FallbackModel string         `json:"fallback_model,omitempty"` // the model after rewrite
-	Input        json.RawMessage `json:"input"`         // compact request body
-	Output       json.RawMessage `json:"output"`        // compact response body
-	DurationMs   int64           `json:"duration_ms"`
+	Timestamp     string          `json:"timestamp"`
+	Type          string          `json:"type"`                     // "compact_fallback" or "custom_compact"
+	RequestModel  string          `json:"request_model"`            // original model requested by the client
+	FallbackModel string          `json:"fallback_model,omitempty"` // the model after rewrite, or custom compact model
+	Input         json.RawMessage `json:"input"`                    // compact request body
+	Output        json.RawMessage `json:"output"`                   // compact response body
+	DurationMs    int64           `json:"duration_ms"`
 }
 
 // compactLogDirOnce ensures the log directory is created at most once per process.
@@ -73,10 +77,10 @@ func writeCompactTriggerLog(requestModel, fallbackModel string, input, output []
 	data = append(data, '\n')
 
 	dir := ensureCompactLogDir()
-	filename := fmt.Sprintf("compact-%s.json", now.Format("2006-01-02T15-04-05.000"))
+	filename := compactTriggerLogFilename(now)
 	path := filepath.Join(dir, filename)
 
-	if err := os.WriteFile(path, data, 0o644); err != nil {
+	if err := os.WriteFile(path, data, compactTriggerLogFileMode); err != nil {
 		log.Warnf("compact trigger-log: write error: %v", err)
 	}
 }
@@ -142,12 +146,16 @@ func writeCustomCompactTriggerLog(requestModel, compactModel string, input, outp
 	data = append(data, '\n')
 
 	dir := ensureCompactLogDir()
-	filename := fmt.Sprintf("compact-%s.json", now.Format("2006-01-02T15-04-05.000"))
+	filename := compactTriggerLogFilename(now)
 	path := filepath.Join(dir, filename)
 
-	if err := os.WriteFile(path, data, 0o644); err != nil {
+	if err := os.WriteFile(path, data, compactTriggerLogFileMode); err != nil {
 		log.Warnf("custom compact trigger-log: write error: %v", err)
 	}
+}
+
+func compactTriggerLogFilename(t time.Time) string {
+	return fmt.Sprintf("compact-%s.log", t.Format("2006-01-02T15-04-05.000000000"))
 }
 
 // asyncCustomCompactTriggerLog fires writeCustomCompactTriggerLog in a separate

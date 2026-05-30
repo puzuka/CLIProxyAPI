@@ -33,6 +33,12 @@ const (
 	codexUserAgent             = "codex_cli_rs/0.118.0 (Mac OS 26.3.1; arm64) iTerm.app/3.6.9"
 	codexOriginator            = "codex_cli_rs"
 	codexDefaultImageToolModel = "gpt-image-2"
+	// codexStreamingReadTimeout caps how long the /responses SSE stream may stall
+	// between bytes. The codex backend sometimes keeps the connection open without
+	// sending data or closing it; without this guard bufio.Scan blocks until the OS
+	// TCP timeout (~15 min), so /v1/responses clients hang before failing. 300s is
+	// well below the 900s client timeout while staying generous for slow models.
+	codexStreamingReadTimeout = 300 * time.Second
 )
 
 var dataTag = []byte("data:")
@@ -596,7 +602,12 @@ func (e *CodexExecutor) ExecuteStream(ctx context.Context, auth *cliproxyauth.Au
 				log.Errorf("codex executor: close response body error: %v", errClose)
 			}
 		}()
-		scanner := bufio.NewScanner(httpResp.Body)
+		// Guard against upstream stalls: if no bytes arrive within
+		// codexStreamingReadTimeout, close the body to unblock the scan so the
+		// request fails fast instead of hanging until the OS TCP timeout (~15 min).
+		idleReader := newIdleTimeoutReader(httpResp.Body, codexStreamingReadTimeout, 0)
+		defer idleReader.stop()
+		scanner := bufio.NewScanner(idleReader)
 		scanner.Buffer(nil, 52_428_800) // 50MB
 		var param any
 		outputItemsByIndex := make(map[int64][]byte)
