@@ -1528,11 +1528,24 @@ func applyModelPrefixes(models []*ModelInfo, prefix string, forceModelPrefix boo
 		if baseID == "" {
 			continue
 		}
-		if !forceModelPrefix || trimmedPrefix == baseID {
-			addModel(model)
+		prefixedID := trimmedPrefix + "/" + baseID
+		if forceModelPrefix {
+			// Force mode never exposes the bare ID unless the prefix equals the
+			// model name, so there is no convenience twin to mark.
+			if trimmedPrefix == baseID {
+				addModel(model)
+			}
+		} else {
+			// Keep the bare ID routable for unprefixed calls, but tag it as the
+			// auto-generated alias of the prefixed entry so model listings can
+			// hide the duplicate while preserving routing.
+			bare := *model
+			bare.AutoPrefixAliasFor = prefixedID
+			addModel(&bare)
 		}
 		clone := *model
-		clone.ID = trimmedPrefix + "/" + baseID
+		clone.ID = prefixedID
+		clone.AutoPrefixAliasFor = ""
 		addModel(&clone)
 	}
 	return out
