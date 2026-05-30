@@ -16,6 +16,32 @@ import (
 
 const geminiCLIFunctionThoughtSignature = "skip_thought_signature_validator"
 
+func parseBase64DataURL(dataURL string) (mimeType string, data string, ok bool) {
+	trimmed, found := strings.CutPrefix(strings.TrimSpace(dataURL), "data:")
+	if !found {
+		return "", "", false
+	}
+	metadata, payload, found := strings.Cut(trimmed, ",")
+	if !found || payload == "" {
+		return "", "", false
+	}
+	metadataParts := strings.Split(metadata, ";")
+	if len(metadataParts) == 0 || metadataParts[0] == "" {
+		return "", "", false
+	}
+	hasBase64 := false
+	for _, part := range metadataParts[1:] {
+		if strings.EqualFold(part, "base64") {
+			hasBase64 = true
+			break
+		}
+	}
+	if !hasBase64 {
+		return "", "", false
+	}
+	return metadataParts[0], payload, true
+}
+
 // ConvertOpenAIRequestToGeminiCLI converts an OpenAI Chat Completions request (raw JSON)
 // into a complete Gemini CLI request JSON. All JSON construction uses sjson and lookups use gjson.
 //
@@ -181,16 +207,25 @@ func ConvertOpenAIRequestToGeminiCLI(modelName string, inputRawJSON []byte, _ bo
 							p++
 						case "image_url":
 							imageURL := item.Get("image_url.url").String()
-							if len(imageURL) > 5 {
-								pieces := strings.SplitN(imageURL[5:], ";", 2)
-								if len(pieces) == 2 && len(pieces[1]) > 7 {
-									mime := pieces[0]
-									data := pieces[1][7:]
-									node, _ = sjson.SetBytes(node, "parts."+itoa(p)+".inlineData.mime_type", mime)
-									node, _ = sjson.SetBytes(node, "parts."+itoa(p)+".inlineData.data", data)
-									node, _ = sjson.SetBytes(node, "parts."+itoa(p)+".thoughtSignature", geminiCLIFunctionThoughtSignature)
-									p++
-								}
+							if imageURL == "" {
+								imageURL = item.Get("image_url").String()
+							}
+							if mime, data, ok := parseBase64DataURL(imageURL); ok {
+								node, _ = sjson.SetBytes(node, "parts."+itoa(p)+".inlineData.mime_type", mime)
+								node, _ = sjson.SetBytes(node, "parts."+itoa(p)+".inlineData.data", data)
+								node, _ = sjson.SetBytes(node, "parts."+itoa(p)+".thoughtSignature", geminiCLIFunctionThoughtSignature)
+								p++
+							}
+						case "video_url":
+							videoURL := item.Get("video_url.url").String()
+							if videoURL == "" {
+								videoURL = item.Get("video_url").String()
+							}
+							if mime, data, ok := parseBase64DataURL(videoURL); ok {
+								node, _ = sjson.SetBytes(node, "parts."+itoa(p)+".inlineData.mime_type", mime)
+								node, _ = sjson.SetBytes(node, "parts."+itoa(p)+".inlineData.data", data)
+								node, _ = sjson.SetBytes(node, "parts."+itoa(p)+".thoughtSignature", geminiCLIFunctionThoughtSignature)
+								p++
 							}
 						case "file":
 							filename := item.Get("file.filename").String()
@@ -227,16 +262,25 @@ func ConvertOpenAIRequestToGeminiCLI(modelName string, inputRawJSON []byte, _ bo
 						case "image_url":
 							// If the assistant returned an inline data URL, preserve it for history fidelity.
 							imageURL := item.Get("image_url.url").String()
-							if len(imageURL) > 5 { // expect data:...
-								pieces := strings.SplitN(imageURL[5:], ";", 2)
-								if len(pieces) == 2 && len(pieces[1]) > 7 {
-									mime := pieces[0]
-									data := pieces[1][7:]
-									node, _ = sjson.SetBytes(node, "parts."+itoa(p)+".inlineData.mime_type", mime)
-									node, _ = sjson.SetBytes(node, "parts."+itoa(p)+".inlineData.data", data)
-									node, _ = sjson.SetBytes(node, "parts."+itoa(p)+".thoughtSignature", geminiCLIFunctionThoughtSignature)
-									p++
-								}
+							if imageURL == "" {
+								imageURL = item.Get("image_url").String()
+							}
+							if mime, data, ok := parseBase64DataURL(imageURL); ok {
+								node, _ = sjson.SetBytes(node, "parts."+itoa(p)+".inlineData.mime_type", mime)
+								node, _ = sjson.SetBytes(node, "parts."+itoa(p)+".inlineData.data", data)
+								node, _ = sjson.SetBytes(node, "parts."+itoa(p)+".thoughtSignature", geminiCLIFunctionThoughtSignature)
+								p++
+							}
+						case "video_url":
+							videoURL := item.Get("video_url.url").String()
+							if videoURL == "" {
+								videoURL = item.Get("video_url").String()
+							}
+							if mime, data, ok := parseBase64DataURL(videoURL); ok {
+								node, _ = sjson.SetBytes(node, "parts."+itoa(p)+".inlineData.mime_type", mime)
+								node, _ = sjson.SetBytes(node, "parts."+itoa(p)+".inlineData.data", data)
+								node, _ = sjson.SetBytes(node, "parts."+itoa(p)+".thoughtSignature", geminiCLIFunctionThoughtSignature)
+								p++
 							}
 						}
 					}
