@@ -513,7 +513,6 @@ func (f *fakeUsageRepository) Close() error {
 	return nil
 }
 
-
 func TestPricingForModelDeepseek(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -539,21 +538,34 @@ func TestPricingForModelDeepseek(t *testing.T) {
 	}
 }
 
-// TestEstimateCostUSDDeepseekV4ProMatchesObservedRequest reproduces a real request
-// from the dashboard (132,866 input tokens with all but ~6.3k served from cache,
-// 162 output tokens) and verifies the new V4 Pro rates yield ~$0.0027, matching
-// the cost reported by opencode-go for the same request.
+// TestEstimateCostUSDDeepseekV4ProMatchesObservedRequest reproduces a real
+// OpenAI-compatible DeepSeek request where reasoning_tokens is a breakdown of
+// completion_tokens, not an additional billed token class.
 func TestEstimateCostUSDDeepseekV4ProMatchesObservedRequest(t *testing.T) {
 	cost := estimateCostUSD("deepseek", "deepseek-v4-pro", tokenUsage{
-		InputTokens:  132866,
-		CachedTokens: 126500, // ≈ 95% cache hit rate observed in production
-		OutputTokens: 162,
+		InputTokens:     77452,
+		CachedTokens:    77312,
+		OutputTokens:    274,
+		ReasoningTokens: 216,
+		TotalTokens:     77726,
 	})
-	// Expected: 6366*0.435/1e6 + 126500*0.003625/1e6 + 162*0.87/1e6
-	//         ≈ 0.002769 + 0.000459 + 0.000141
-	//         ≈ 0.003369. Allow generous tolerance against rounding.
-	if cost < 0.0030 || cost > 0.0040 {
-		t.Fatalf("estimated cost = %.6f; want roughly $0.0034 for V4 Pro mostly-cached request", cost)
+	// Expected: 140*0.435/1e6 + 77312*0.003625/1e6 + 274*0.87/1e6.
+	want := 0.000579536
+	if diff := cost - want; diff < -0.000000001 || diff > 0.000000001 {
+		t.Fatalf("estimated cost = %.12f; want %.12f without double-counting reasoning", cost, want)
+	}
+}
+
+func TestEstimateCostUSDChargesExternalReasoningOnly(t *testing.T) {
+	cost := estimateCostUSD("gemini", "gemini-2.5-pro", tokenUsage{
+		InputTokens:     1000,
+		OutputTokens:    100,
+		ReasoningTokens: 50,
+		TotalTokens:     1150,
+	})
+	want := (1000*2.0 + 100*12.0 + 50*18.0) / 1_000_000
+	if diff := cost - want; diff < -0.000000001 || diff > 0.000000001 {
+		t.Fatalf("estimated cost = %.12f; want %.12f with externally counted reasoning", cost, want)
 	}
 }
 
@@ -598,7 +610,6 @@ func TestPricingForModelMiMo(t *testing.T) {
 		})
 	}
 }
-
 
 func TestStoreSnapshotStripsUpstreamAccountFromRecentRequests(t *testing.T) {
 	store := newStore()

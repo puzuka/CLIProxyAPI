@@ -1989,9 +1989,26 @@ func estimateCostUSD(provider, model string, tokens tokenUsage) float64 {
 	cost := float64(nonCachedInput)*(pricing.Input/1_000_000) +
 		float64(cached)*(pricing.Cached/1_000_000) +
 		float64(tokens.OutputTokens)*(pricing.Output/1_000_000) +
-		float64(tokens.ReasoningTokens)*(pricing.Reasoning/1_000_000) +
+		float64(billableReasoningTokens(tokens))*(pricing.Reasoning/1_000_000) +
 		float64(tokens.CacheCreationTokens)*(pricing.CacheCreation/1_000_000)
 	return cost
+}
+
+func billableReasoningTokens(tokens tokenUsage) int64 {
+	if tokens.ReasoningTokens <= 0 {
+		return 0
+	}
+	if tokens.TotalTokens <= 0 {
+		return tokens.ReasoningTokens
+	}
+	externalReasoning := tokens.TotalTokens - tokens.InputTokens - tokens.OutputTokens
+	if externalReasoning <= 0 {
+		return 0
+	}
+	if externalReasoning > tokens.ReasoningTokens {
+		return tokens.ReasoningTokens
+	}
+	return externalReasoning
 }
 
 func pricingForModel(provider, model string) modelPricing {
@@ -2010,7 +2027,7 @@ func pricingForModel(provider, model string) modelPricing {
 		}
 		return modelPricing{Input: 2, Output: 12, Cached: 0.25, Reasoning: 18, CacheCreation: 2}
 	case strings.Contains(value, "deepseek-v4-pro"):
-		// Permanent pricing since 2026-05-22 (the 75%-off promo became the standing rate).
+		// The 75%-off V4 Pro rate becomes the official 1/4 rate after 2026-05-31 15:59 UTC.
 		// Source: https://api-docs.deepseek.com/quick_start/pricing
 		return modelPricing{Input: 0.435, Output: 0.87, Cached: 0.003625, Reasoning: 0.87, CacheCreation: 0.435}
 	case strings.Contains(value, "deepseek"):
