@@ -10,6 +10,7 @@ package cliproxy
 import (
 	"context"
 	"strings"
+	"sync"
 	"time"
 
 	copilotauth "github.com/router-for-me/CLIProxyAPI/v7/internal/auth/copilot"
@@ -23,7 +24,17 @@ import (
 const copilotDynamicFetchTimeout = 8 * time.Second
 const copilotModelProbeTimeout = 20 * time.Second
 
+// copilotModelProbeTTL throttles the live capability probe per auth. Model
+// registration is refreshed on every Copilot token refresh (~every 20-30 min),
+// but re-probing every model on each refresh hammers the upstream and risks
+// GitHub abuse detection, so reuse the previous probe result within this window.
+const copilotModelProbeTTL = 6 * time.Hour
+
 var copilotModelProbeSlots = make(chan struct{}, 8)
+
+// copilotLastProbe tracks the last probe time per auth ID for TTL throttling.
+var copilotLastProbe sync.Map
+
 
 // refreshCopilotDynamicModels schedules an asynchronous fetch of the live
 // Copilot model list for the given auth and re-registers only models that pass
@@ -40,6 +51,14 @@ func (s *Service) refreshCopilotDynamicModels(a *coreauth.Auth, excluded []strin
 	if strings.TrimSpace(token) == "" {
 		return
 	}
+
+	// Throttle: skip re-probing if we probed this auth within the TTL window.
+	if last, ok := copilotLastProbe.Load(a.ID); ok {
+		if t, isTime := last.(time.Time); isTime && time.Since(t) < copilotModelProbeTTL {
+			return
+		}
+	}
+	copilotLastProbe.Store(a.ID, time.Now())
 
 	authID := a.ID
 	provider := strings.ToLower(strings.TrimSpace(a.Provider))
@@ -67,11 +86,13 @@ func (s *Service) refreshCopilotDynamicModels(a *coreauth.Auth, excluded []strin
 		authSvc := copilotauth.NewCopilotAuthWithProxyURL(cfg, proxyURL)
 		apiModels, err := authSvc.ListModels(ctx, endpoint, token)
 		if err != nil {
+			copilotLastProbe.Delete(authID)
 			log.Debugf("copilot: ListModels failed for %s: %v", authID, err)
 			return
 		}
 		converted := registry.ConvertCopilotAPIModels(toCopilotRegistryModels(apiModels))
 		if len(converted) == 0 {
+			copilotLastProbe.Delete(authID)
 			return
 		}
 		merged := registry.MergeCopilotDynamicWithStaticMetadata(converted, registry.GetCopilotModels())

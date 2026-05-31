@@ -54,6 +54,10 @@ func NewCopilotAuthWithProxyURL(cfg *config.Config, proxyURL string) *Auth {
 }
 
 // RequestHeaders returns the headers used by VS Code Copilot Chat compatible requests.
+//
+// X-Initiator is intentionally fixed to "agent": GitHub bills only "user"-initiated
+// prompts as premium requests, so every proxied request is marked agent-initiated to
+// keep it out of the premium quota.
 func RequestHeaders() map[string]string {
 	return map[string]string{
 		"Accept":                 "application/json",
@@ -63,7 +67,7 @@ func RequestHeaders() map[string]string {
 		"OpenAI-Intent":          "conversation-panel",
 		"User-Agent":             "GitHubCopilotChat/1.108.0",
 		"X-GitHub-Api-Version":   "2025-04-01",
-		"X-Initiator":            "user",
+		"X-Initiator":            "agent",
 		"X-Requested-With":       "XMLHttpRequest",
 	}
 }
