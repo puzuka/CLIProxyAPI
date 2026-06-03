@@ -284,6 +284,30 @@ func TestUsageReporterBuildAdditionalModelRecordSkipsZeroTokens(t *testing.T) {
 	}
 }
 
+func TestParseGeminiStreamUsage_ResponseSnakeCaseUsageMetadata(t *testing.T) {
+	line := []byte(`data: {"usageMetadata":{"promptTokenCount":13,"candidatesTokenCount":2,"totalTokenCount":15}}`)
+	detail, ok := ParseGeminiStreamUsage(line)
+	if !ok {
+		t.Fatal("ParseGeminiStreamUsage() ok = false, want true")
+	}
+	if detail.InputTokens != 13 {
+		t.Fatalf("input tokens = %d, want %d", detail.InputTokens, 13)
+	}
+	if detail.OutputTokens != 2 {
+		t.Fatalf("output tokens = %d, want %d", detail.OutputTokens, 2)
+	}
+	if detail.TotalTokens != 15 {
+		t.Fatalf("total tokens = %d, want %d", detail.TotalTokens, 15)
+	}
+}
+
+func TestParseGeminiStreamUsage_IgnoresTrafficTypeOnlyUsageMetadata(t *testing.T) {
+	line := []byte(`data: {"usageMetadata":{"trafficType":"ON_DEMAND"}}`)
+	if detail, ok := ParseGeminiStreamUsage(line); ok {
+		t.Fatalf("ParseGeminiStreamUsage() = (%+v, true), want false for traffic-only usage metadata", detail)
+	}
+}
+
 func waitForUsageDetails(t *testing.T, requestID string) usageportal.RequestDetailsSnapshot {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
