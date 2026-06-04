@@ -82,9 +82,9 @@ func ConvertGeminiRequestToGemini(_ string, inputRawJSON []byte, _ bool) []byte 
 		if content.Get("role").String() == "model" {
 			content.Get("parts").ForEach(func(partKey, part gjson.Result) bool {
 				if part.Get("functionCall").Exists() {
-					out, _ = sjson.SetBytes(out, fmt.Sprintf("contents.%d.parts.%d.thoughtSignature", key.Int(), partKey.Int()), "skip_thought_signature_validator")
+					out, _ = sjson.SetBytes(out, fmt.Sprintf("contents.%d.parts.%d.thoughtSignature", key.Int(), partKey.Int()), "c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I=")
 				} else if part.Get("thoughtSignature").Exists() {
-					out, _ = sjson.SetBytes(out, fmt.Sprintf("contents.%d.parts.%d.thoughtSignature", key.Int(), partKey.Int()), "skip_thought_signature_validator")
+					out, _ = sjson.SetBytes(out, fmt.Sprintf("contents.%d.parts.%d.thoughtSignature", key.Int(), partKey.Int()), "c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I=")
 				}
 				return true
 			})

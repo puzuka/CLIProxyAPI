@@ -102,7 +102,7 @@ func ConvertGeminiRequestToAntigravity(modelName string, inputRawJSON []byte, _ 
 	// - Replace client-provided thoughtSignature values with the skip sentinel.
 	// - Add the same sentinel to functionCall and thinking parts so upstream can bypass signature validation.
 	if !strings.Contains(strings.ToLower(modelName), "claude") {
-		const skipSentinel = "skip_thought_signature_validator"
+		const skipSentinel = "c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I="
 
 		gjson.GetBytes(rawJSON, "request.contents").ForEach(func(contentIdx, content gjson.Result) bool {
 			if content.Get("role").String() == "model" {

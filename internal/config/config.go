@@ -170,6 +170,9 @@ type Config struct {
 	// read timeout, which is safest for slow "thinking" models.
 	KiroFirstTokenTimeout int `yaml:"kiro-first-token-timeout,omitempty" json:"kiro-first-token-timeout,omitempty"`
 
+	// Headroom configures integration with Headroom context compression proxy.
+	Headroom HeadroomConfig `yaml:"headroom" json:"headroom"`
+
 	// IncognitoBrowser enables opening OAuth URLs in incognito/private browsing mode.
 	// Useful for logging in with a different account without logging out of the current session.
 	IncognitoBrowser bool `yaml:"incognito-browser,omitempty" json:"incognito-browser,omitempty"`
@@ -2156,4 +2159,64 @@ func removeLegacyAuthBlock(root *yaml.Node) {
 		return
 	}
 	removeMapKey(root, "auth")
+}
+
+// HeadroomConfig configures integration with Headroom context compression proxy.
+// When enabled, requests matching target models are routed through a Headroom proxy
+// instance for context compression before forwarding to the upstream provider.
+type HeadroomConfig struct {
+	// Enabled toggles Headroom integration.
+	Enabled bool `yaml:"enabled" json:"enabled"`
+
+	// Endpoint is the base URL of the Headroom proxy server.
+	// Default: http://127.0.0.1:8787
+	Endpoint string `yaml:"endpoint" json:"endpoint"`
+
+	// TargetModels defines which models should be routed through Headroom.
+	// Use "*" to apply to all models, or specify exact model names.
+	// Examples: ["*"], ["claude-3-5-sonnet-20241022", "gpt-4"]
+	TargetModels []string `yaml:"target-models" json:"target-models"`
+
+	// ManagedProcess controls whether CLIProxyAPI should automatically start
+	// and manage the Headroom proxy process lifecycle.
+	ManagedProcess bool `yaml:"managed-process" json:"managed-process"`
+
+	// Command is the shell command to start Headroom proxy when ManagedProcess is true.
+	// Default: "headroom proxy --port 8787"
+	Command string `yaml:"command" json:"command"`
+
+	// Timeout is the HTTP timeout in seconds for requests routed through Headroom.
+	// Context compression may take longer than normal requests, so this should be
+	// higher than standard timeouts. Default: 120 seconds.
+	Timeout int `yaml:"timeout,omitempty" json:"timeout,omitempty"`
+}
+
+// ApplyDefaults sets default values for HeadroomConfig fields.
+func (c *HeadroomConfig) ApplyDefaults() {
+	if c.Endpoint == "" {
+		c.Endpoint = "http://127.0.0.1:8787"
+	}
+	if c.Command == "" {
+		c.Command = "headroom proxy --port 8787"
+	}
+	if c.Timeout <= 0 {
+		c.Timeout = 120
+	}
+	if len(c.TargetModels) == 0 {
+		c.TargetModels = []string{"*"}
+	}
+}
+
+// ShouldRouteModel checks if a given model should be routed through Headroom.
+func (c *HeadroomConfig) ShouldRouteModel(modelName string) bool {
+	if !c.Enabled {
+		return false
+	}
+
+	for _, target := range c.TargetModels {
+		if target == "*" || target == modelName {
+			return true
+		}
+	}
+	return false
 }

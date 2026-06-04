@@ -16,7 +16,7 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-const geminiClaudeThoughtSignature = "skip_thought_signature_validator"
+const geminiClaudeThoughtSignature = "c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I="
 
 // ConvertClaudeRequestToGemini parses a Claude API request and returns a complete
 // Gemini CLI request body (as JSON bytes) ready to be sent via SendRawMessageStream.

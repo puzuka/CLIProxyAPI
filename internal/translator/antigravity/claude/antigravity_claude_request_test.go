@@ -935,8 +935,8 @@ func TestConvertClaudeRequestToAntigravity_ToolUse(t *testing.T) {
 	if funcCall.Get("id").String() != "call_123" {
 		t.Errorf("Expected function id 'call_123', got '%s'", funcCall.Get("id").String())
 	}
-	// Verify skip_thought_signature_validator is added (bypass for tools without valid thinking)
-	expectedSig := "skip_thought_signature_validator"
+	// Verify c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I= is added (bypass for tools without valid thinking)
+	expectedSig := "c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I="
 	actualSig := parts[0].Get("thoughtSignature").String()
 	if actualSig != expectedSig {
 		t.Errorf("Expected thoughtSignature '%s', got '%s'", expectedSig, actualSig)

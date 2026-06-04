@@ -14,7 +14,7 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-const geminiCLIClaudeThoughtSignature = "skip_thought_signature_validator"
+const geminiCLIClaudeThoughtSignature = "c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I="
 
 // ConvertClaudeRequestToCLI parses and transforms a Claude Code API request into Gemini CLI API format.
 // It extracts the model name, system instruction, message contents, and tool declarations

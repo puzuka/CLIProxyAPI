@@ -575,3 +575,32 @@ custom-compact:
 #       params: # JSON paths (gjson/sjson syntax) to remove from the payload
 #         - "generationConfig.thinkingConfig.thinkingBudget"
 #         - "generationConfig.responseJsonSchema"
+
+# Headroom context compression integration
+# When enabled, requests are routed through Headroom proxy for context compression
+# before forwarding to the upstream provider, reducing token usage by 60-95%.
+# See: https://github.com/chopratejas/headroom
+headroom:
+  # Enable or disable Headroom integration
+  enabled: false
+  
+  # Headroom proxy endpoint (default: http://127.0.0.1:8787)
+  endpoint: "http://127.0.0.1:8787"
+  
+  # Models to route through Headroom
+  # Use "*" for all models, or specify exact model names
+  # Examples: ["*"], ["claude-3-5-sonnet-20241022", "gpt-4"]
+  target-models:
+    - "*"
+  
+  # Auto-manage Headroom process lifecycle
+  # When true, CLIProxyAPI will automatically start and stop the Headroom proxy
+  managed-process: false
+  
+  # Command to start Headroom proxy (used when managed-process is true)
+  # Requires Python and headroom package installed: pip install headroom
+  command: "headroom proxy --port 8787"
+  
+  # HTTP timeout for Headroom requests (seconds)
+  # Context compression can take longer than normal requests
+  timeout: 120

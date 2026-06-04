@@ -130,7 +130,7 @@ func TestHasValidSignature(t *testing.T) {
 		{"49 chars - invalid", testModelName, "1234567890123456789012345678901234567890123456789", false},
 		{"empty string", testModelName, "", false},
 		{"short signature", testModelName, "abc", false},
-		{"gemini sentinel", "gemini-3-pro-preview", "skip_thought_signature_validator", true},
+		{"gemini sentinel", "gemini-3-pro-preview", "c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I=", true},
 	}
 
 	for _, tt := range tests {
