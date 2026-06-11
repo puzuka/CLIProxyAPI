@@ -779,6 +779,47 @@ func TestManager_MarkResult_RequestScopedNotFoundDoesNotCooldownAuth(t *testing.
 	}
 }
 
+func TestManager_MarkResult_RequestInvalidDoesNotCooldownAuth(t *testing.T) {
+	m := NewManager(nil, nil, nil)
+
+	auth := &Auth{
+		ID:       "auth-1",
+		Provider: "xiaomi-mimo",
+	}
+	if _, errRegister := m.Register(context.Background(), auth); errRegister != nil {
+		t.Fatalf("register auth: %v", errRegister)
+	}
+
+	model := "mimo-v2.5-pro"
+	m.MarkResult(context.Background(), Result{
+		AuthID:   auth.ID,
+		Provider: auth.Provider,
+		Model:    model,
+		Success:  false,
+		Error: &Error{
+			HTTPStatus: http.StatusBadRequest,
+			Message:    `{"error":{"message":"unexpected end of data: line 1 column 189 (char 188)","type":"invalid_request_error"}}`,
+		},
+	})
+
+	updated, ok := m.GetByID(auth.ID)
+	if !ok || updated == nil {
+		t.Fatalf("expected auth to be present")
+	}
+	if updated.Unavailable {
+		t.Fatalf("expected request-scoped 400 to keep auth available")
+	}
+	if !updated.NextRetryAfter.IsZero() {
+		t.Fatalf("expected request-scoped 400 to keep auth cooldown unset, got %v", updated.NextRetryAfter)
+	}
+	if updated.LastError != nil {
+		t.Fatalf("expected request-scoped 400 to avoid auth last error, got %#v", updated.LastError)
+	}
+	if state := updated.ModelStates[model]; state != nil {
+		t.Fatalf("expected request-scoped 400 to avoid model cooldown state, got %#v", state)
+	}
+}
+
 func TestManager_RequestScopedNotFoundStopsRetryWithoutSuspendingAuth(t *testing.T) {
 	m := NewManager(nil, nil, nil)
 	executor := &authFallbackExecutor{

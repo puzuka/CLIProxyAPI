@@ -211,6 +211,7 @@ func buildResponsesCompletedEvent(st *oaiToResponsesState, requestRawJSON []byte
 			}
 			callID := st.FuncCallIDs[key]
 			name := st.FuncNames[key]
+			args, _ = normalizeFunctionCallArguments(name, args)
 			var item []byte
 			if st.CustomToolNames[name] {
 				item = []byte(`{"id":"","type":"custom_tool_call","status":"completed","input":"","call_id":"","name":""}`)
@@ -565,23 +566,9 @@ func ConvertOpenAIChatCompletionsResponseToOpenAIResponses(ctx context.Context, 
 						}
 
 						if args := tc.Get("function.arguments"); args.Exists() && args.String() != "" {
-							refCallID := st.FuncCallIDs[key]
-							if refCallID == "" {
-								refCallID = newCallID
-							}
-							// Custom tools accumulate their {"input":"..."} payload
-							// and emit a single unwrapped input delta/done at
-							// finish (the streaming JSON fragments cannot be safely
-							// unwrapped mid-flight). Function tools stream as usual.
-							if refCallID != "" && !st.CustomToolNames[st.FuncNames[key]] {
-								outputIndex := st.FuncOutputIx[key]
-								ad := []byte(`{"type":"response.function_call_arguments.delta","sequence_number":0,"item_id":"","output_index":0,"delta":""}`)
-								ad, _ = sjson.SetBytes(ad, "sequence_number", nextSeq())
-								ad, _ = sjson.SetBytes(ad, "item_id", fmt.Sprintf("fc_%s", refCallID))
-								ad, _ = sjson.SetBytes(ad, "output_index", outputIndex)
-								ad, _ = sjson.SetBytes(ad, "delta", args.String())
-								out = append(out, emitRespEvent("response.function_call_arguments.delta", ad))
-							}
+							// Accumulate the complete argument payload and emit it
+							// only after JSON validation. This prevents malformed
+							// streamed fragments from becoming durable history.
 							st.FuncArgsBuf[key].WriteString(args.String())
 						}
 						return true
@@ -661,6 +648,7 @@ func ConvertOpenAIChatCompletionsResponseToOpenAIResponses(ctx context.Context, 
 						if b := st.FuncArgsBuf[key]; b != nil && b.Len() > 0 {
 							args = b.String()
 						}
+						args, _ = normalizeFunctionCallArguments(st.FuncNames[key], args)
 
 						if st.CustomToolNames[st.FuncNames[key]] {
 							// Unwrap {"input":"<raw>"} and emit the custom tool
@@ -694,6 +682,13 @@ func ConvertOpenAIChatCompletionsResponseToOpenAIResponses(ctx context.Context, 
 							st.FuncArgsDone[key] = true
 							continue
 						}
+
+						argDelta := []byte(`{"type":"response.function_call_arguments.delta","sequence_number":0,"item_id":"","output_index":0,"delta":""}`)
+						argDelta, _ = sjson.SetBytes(argDelta, "sequence_number", nextSeq())
+						argDelta, _ = sjson.SetBytes(argDelta, "item_id", fmt.Sprintf("fc_%s", callID))
+						argDelta, _ = sjson.SetBytes(argDelta, "output_index", outputIndex)
+						argDelta, _ = sjson.SetBytes(argDelta, "delta", args)
+						out = append(out, emitRespEvent("response.function_call_arguments.delta", argDelta))
 
 						fcDone := []byte(`{"type":"response.function_call_arguments.done","sequence_number":0,"item_id":"","output_index":0,"arguments":""}`)
 						fcDone, _ = sjson.SetBytes(fcDone, "sequence_number", nextSeq())
@@ -863,6 +858,7 @@ func ConvertOpenAIChatCompletionsResponseToOpenAIResponsesNonStream(_ context.Co
 						callID := tc.Get("id").String()
 						name := tc.Get("function.name").String()
 						args := tc.Get("function.arguments").String()
+						args, _ = normalizeFunctionCallArguments(name, args)
 						item := []byte(`{"id":"","type":"function_call","status":"completed","arguments":"","call_id":"","name":""}`)
 						item, _ = sjson.SetBytes(item, "id", fmt.Sprintf("fc_%s", callID))
 						item, _ = sjson.SetBytes(item, "arguments", args)

@@ -10,7 +10,7 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-const geminiResponsesThoughtSignature = "skip_thought_signature_validator"
+const geminiResponsesThoughtSignature = "c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I="
 
 func ConvertOpenAIResponsesRequestToGemini(modelName string, inputRawJSON []byte, stream bool) []byte {
 	rawJSON := inputRawJSON

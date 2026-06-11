@@ -62,6 +62,28 @@ func TestConvertOpenAIResponsesRequestToOpenAIChatCompletions_MergeConsecutiveFu
 	}
 }
 
+func TestConvertOpenAIResponsesRequestToOpenAIChatCompletions_SanitizesMalformedFunctionCallHistory(t *testing.T) {
+	raw := []byte(`{
+		"input": [
+			{"type":"function_call","call_id":"call_bad_args","name":"update_plan","arguments":"{\"explanation\":\"create app store images\""},
+			{"type":"function_call_output","call_id":"call_bad_args","output":"failed to parse function arguments: EOF"}
+		]
+	}`)
+	t.Logf("input json:\n%s", prettyJSONForTest(raw))
+
+	out := ConvertOpenAIResponsesRequestToOpenAIChatCompletions("mimo-v2.5-pro", raw, true)
+	t.Logf("output json:\n%s", prettyJSONForTest(out))
+
+	args := gjson.GetBytes(out, "messages.0.tool_calls.0.function.arguments").String()
+	assertSanitizedMalformedToolArguments(t, "request history", args, "update_plan")
+	if got := gjson.GetBytes(out, "messages.1.role").String(); got != "tool" {
+		t.Fatalf("messages.1.role = %q, want tool", got)
+	}
+	if got := gjson.GetBytes(out, "messages.1.tool_call_id").String(); got != "call_bad_args" {
+		t.Fatalf("messages.1.tool_call_id = %q, want call_bad_args", got)
+	}
+}
+
 func TestConvertOpenAIResponsesRequestToOpenAIChatCompletions_SplitFunctionCallsWhenInterrupted(t *testing.T) {
 	raw := []byte(`{
 		"input": [

@@ -24,6 +24,23 @@ func parseOpenAIResponsesSSEEvent(t *testing.T, chunk []byte) (string, gjson.Res
 	return event, gjson.Parse(dataLine)
 }
 
+func assertSanitizedMalformedToolArguments(t *testing.T, label, args, toolName string) {
+	t.Helper()
+
+	if !gjson.Valid(args) {
+		t.Fatalf("%s arguments should be valid JSON, got %q", label, args)
+	}
+	if got := gjson.Get(args, "_cliproxy_error").String(); got != "malformed_tool_call_arguments" {
+		t.Fatalf("%s _cliproxy_error = %q, want malformed_tool_call_arguments; args=%s", label, got, args)
+	}
+	if got := gjson.Get(args, "tool_name").String(); got != toolName {
+		t.Fatalf("%s tool_name = %q, want %q; args=%s", label, got, toolName, args)
+	}
+	if got := gjson.Get(args, "raw_arguments_length").Int(); got == 0 {
+		t.Fatalf("%s raw_arguments_length should be populated; args=%s", label, args)
+	}
+}
+
 func TestConvertOpenAIChatCompletionsResponseToOpenAIResponses_ResponseCompletedWaitsForDone(t *testing.T) {
 	t.Parallel()
 
@@ -201,6 +218,63 @@ func TestConvertOpenAIChatCompletionsResponseToOpenAIResponsesNonStream_Reasonin
 	if got := gjson.GetBytes(out, "output.0.encrypted_content").String(); got != "nonstream thinking" {
 		t.Fatalf("encrypted_content = %q, want nonstream thinking", got)
 	}
+}
+
+func TestConvertOpenAIChatCompletionsResponseToOpenAIResponses_SanitizesMalformedFunctionCallArguments(t *testing.T) {
+	in := []string{
+		`data: {"id":"resp_bad_args","object":"chat.completion.chunk","created":1773896263,"model":"model","choices":[{"index":0,"delta":{"role":"assistant","content":null,"reasoning_content":null,"tool_calls":[{"index":0,"id":"call_bad_args","type":"function","function":{"name":"update_plan","arguments":""}}]},"finish_reason":null}]}`,
+		`data: {"id":"resp_bad_args","object":"chat.completion.chunk","created":1773896263,"model":"model","choices":[{"index":0,"delta":{"role":null,"content":null,"reasoning_content":null,"tool_calls":[{"index":0,"function":{"arguments":"{\"explanation\":\"create app store images\""}}]},"finish_reason":"tool_calls"}]}`,
+		`data: [DONE]`,
+	}
+	request := []byte(`{"model":"mimo-v2.5-pro","tool_choice":"auto","parallel_tool_calls":true}`)
+
+	var param any
+	var deltaArgs string
+	var doneArgs string
+	var itemDoneArgs string
+	var completedArgs string
+	deltaCount := 0
+	for _, line := range in {
+		for _, chunk := range ConvertOpenAIChatCompletionsResponseToOpenAIResponses(context.Background(), "model", request, request, []byte(line), &param) {
+			event, data := parseOpenAIResponsesSSEEvent(t, chunk)
+			switch event {
+			case "response.function_call_arguments.delta":
+				deltaCount++
+				deltaArgs = data.Get("delta").String()
+			case "response.function_call_arguments.done":
+				doneArgs = data.Get("arguments").String()
+			case "response.output_item.done":
+				if data.Get("item.type").String() == "function_call" {
+					itemDoneArgs = data.Get("item.arguments").String()
+				}
+			case "response.completed":
+				completedArgs = data.Get("response.output.0.arguments").String()
+			}
+		}
+	}
+
+	if deltaCount != 1 {
+		t.Fatalf("expected one validated function_call_arguments.delta, got %d", deltaCount)
+	}
+	assertSanitizedMalformedToolArguments(t, "delta", deltaArgs, "update_plan")
+	assertSanitizedMalformedToolArguments(t, "arguments.done", doneArgs, "update_plan")
+	assertSanitizedMalformedToolArguments(t, "output_item.done", itemDoneArgs, "update_plan")
+	assertSanitizedMalformedToolArguments(t, "response.completed", completedArgs, "update_plan")
+}
+
+func TestConvertOpenAIChatCompletionsResponseToOpenAIResponsesNonStream_SanitizesMalformedFunctionCallArguments(t *testing.T) {
+	request := []byte(`{"model":"mimo-v2.5-pro","tool_choice":"auto"}`)
+	raw := []byte(`{
+		"id":"chatcmpl_bad_args",
+		"object":"chat.completion",
+		"created":1773896263,
+		"model":"model",
+		"choices":[{"index":0,"message":{"role":"assistant","tool_calls":[{"id":"call_bad_args","type":"function","function":{"name":"update_plan","arguments":"{\"explanation\":\"create app store images\""}}]},"finish_reason":"tool_calls"}],
+		"usage":{"prompt_tokens":1,"completion_tokens":2,"total_tokens":3}
+	}`)
+
+	out := ConvertOpenAIChatCompletionsResponseToOpenAIResponsesNonStream(context.Background(), "model", request, request, raw, nil)
+	assertSanitizedMalformedToolArguments(t, "nonstream output", gjson.GetBytes(out, "output.0.arguments").String(), "update_plan")
 }
 
 func TestConvertOpenAIChatCompletionsResponseToOpenAIResponses_MultipleToolCallsRemainSeparate(t *testing.T) {

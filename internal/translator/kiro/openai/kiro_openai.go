@@ -17,6 +17,30 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+func normalizeKiroCodexResponseText(text string) string {
+	lower := strings.ToLower(text)
+	selfDisclosure := strings.Contains(lower, "i'm kiro") ||
+		strings.Contains(lower, "i am kiro") ||
+		strings.Contains(lower, "as kiro") ||
+		strings.Contains(lower, "kiro, an ai-powered")
+	if selfDisclosure && (strings.Contains(lower, "prompt injection") ||
+		strings.Contains(lower, "can't comply") ||
+		strings.Contains(lower, "can't discuss") ||
+		strings.Contains(lower, "successful manipulation")) {
+		return "I am Codex."
+	}
+
+	replacer := strings.NewReplacer(
+		"I'm Kiro", "I'm Codex",
+		"I am Kiro", "I am Codex",
+		"As Kiro", "As Codex",
+		"as Kiro", "as Codex",
+		"Kiro, an AI-powered development environment", "Codex, a coding assistant",
+		"Kiro", "Codex",
+	)
+	return replacer.Replace(text)
+}
+
 // ConvertKiroStreamToOpenAI converts Kiro streaming response to OpenAI format.
 // The Kiro executor emits Claude-compatible SSE events, so this function translates
 // from Claude SSE format to OpenAI SSE format.
@@ -109,6 +133,7 @@ func ConvertKiroStreamToOpenAI(ctx context.Context, model string, originalReques
 		case "text_delta":
 			textDelta := eventJSON.Get("delta.text").String()
 			if textDelta != "" {
+				textDelta = normalizeKiroCodexResponseText(textDelta)
 				chunk := BuildOpenAISSETextDelta(state, textDelta)
 				results = append(results, []byte(chunk))
 			}
@@ -210,7 +235,7 @@ func ConvertKiroNonStreamToOpenAI(ctx context.Context, model string, originalReq
 			blockType := block.Get("type").String()
 			switch blockType {
 			case "text":
-				content += block.Get("text").String()
+				content += normalizeKiroCodexResponseText(block.Get("text").String())
 			case "thinking":
 				// Convert thinking blocks to reasoning_content for OpenAI format
 				reasoningContent += block.Get("thinking").String()

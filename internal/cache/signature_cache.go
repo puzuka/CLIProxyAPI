@@ -125,14 +125,14 @@ func GetCachedSignature(modelName, text string) string {
 
 	if text == "" {
 		if groupKey == "gemini" {
-			return "skip_thought_signature_validator"
+			return "c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I="
 		}
 		return ""
 	}
 	val, ok := signatureCache.Load(groupKey)
 	if !ok {
 		if groupKey == "gemini" {
-			return "skip_thought_signature_validator"
+			return "c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I="
 		}
 		return ""
 	}
@@ -147,7 +147,7 @@ func GetCachedSignature(modelName, text string) string {
 	if !exists {
 		sc.mu.Unlock()
 		if groupKey == "gemini" {
-			return "skip_thought_signature_validator"
+			return "c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I="
 		}
 		return ""
 	}
@@ -155,7 +155,7 @@ func GetCachedSignature(modelName, text string) string {
 		delete(sc.entries, textHash)
 		sc.mu.Unlock()
 		if groupKey == "gemini" {
-			return "skip_thought_signature_validator"
+			return "c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I="
 		}
 		return ""
 	}
@@ -183,7 +183,7 @@ func ClearSignatureCache(modelName string) {
 
 // HasValidSignature checks if a signature is valid (non-empty and long enough)
 func HasValidSignature(modelName, signature string) bool {
-	return (signature != "" && len(signature) >= MinValidSignatureLen) || (signature == "skip_thought_signature_validator" && GetModelGroup(modelName) == "gemini")
+	return (signature != "" && len(signature) >= MinValidSignatureLen) || (signature == "c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I=" && GetModelGroup(modelName) == "gemini")
 }
 
 func GetModelGroup(modelName string) string {

@@ -10,6 +10,8 @@ package responses
 
 import (
 	"context"
+	"encoding/json"
+	"strings"
 
 	kiroopenai "github.com/router-for-me/CLIProxyAPI/v7/internal/translator/kiro/openai"
 	openairesponses "github.com/router-for-me/CLIProxyAPI/v7/internal/translator/openai/openai/responses"
@@ -67,6 +69,39 @@ func streamState(param *any) *chainStreamState {
 	return state
 }
 
+func sanitizeOriginalResponsesRequestForKiro(rawJSON []byte) []byte {
+	var root map[string]any
+	if err := json.Unmarshal(rawJSON, &root); err != nil {
+		return rawJSON
+	}
+
+	instructions, ok := root["instructions"].(string)
+	if !ok {
+		return rawJSON
+	}
+
+	root["instructions"] = sanitizeKiroResponseMetadataText(instructions)
+	out, err := json.Marshal(root)
+	if err != nil {
+		return rawJSON
+	}
+	return out
+}
+
+func sanitizeKiroResponseMetadataText(text string) string {
+	replacer := strings.NewReplacer(
+		"prompt-injection", "instruction-conflict",
+		"prompt injection", "instruction conflict",
+		"Prompt-injection", "Instruction-conflict",
+		"Prompt injection", "Instruction conflict",
+		"Kiro", "upstream provider",
+		"Amazon Q", "upstream provider",
+		"CodeWhisperer", "upstream provider",
+		"AWS", "upstream provider",
+	)
+	return replacer.Replace(text)
+}
+
 // ConvertKiroStreamToOpenAIResponses converts a single Kiro stream chunk into
 // zero or more OpenAI Responses SSE events.
 //
@@ -89,6 +124,8 @@ func streamState(param *any) *chainStreamState {
 // `[DONE]` and feed it through the response framer so it can finalise.
 func ConvertKiroStreamToOpenAIResponses(ctx context.Context, modelName string, originalRequestRawJSON, requestRawJSON, rawJSON []byte, param *any) [][]byte {
 	st := streamState(param)
+	sanitizedOriginalRequestRawJSON := sanitizeOriginalResponsesRequestForKiro(originalRequestRawJSON)
+	sanitizedRequestRawJSON := sanitizeOriginalResponsesRequestForKiro(requestRawJSON)
 
 	chatChunks := kiroopenai.ConvertKiroStreamToOpenAI(ctx, modelName, originalRequestRawJSON, requestRawJSON, rawJSON, &st.kiroParam)
 	if len(chatChunks) == 0 {
@@ -101,7 +138,7 @@ func ConvertKiroStreamToOpenAIResponses(ctx context.Context, modelName string, o
 		if len(chunk) == 0 {
 			continue
 		}
-		events := openairesponses.ConvertOpenAIChatCompletionsResponseToOpenAIResponses(ctx, modelName, originalRequestRawJSON, requestRawJSON, chunk, &st.responseParam)
+		events := openairesponses.ConvertOpenAIChatCompletionsResponseToOpenAIResponses(ctx, modelName, sanitizedOriginalRequestRawJSON, sanitizedRequestRawJSON, chunk, &st.responseParam)
 		out = append(out, events...)
 
 		if !sawFinish && chunkHasFinishReason(chunk) {
@@ -114,7 +151,7 @@ func ConvertKiroStreamToOpenAIResponses(ctx context.Context, modelName string, o
 		// pending output_text.done / response.completed envelope. We do this
 		// once per stream — the response stage is idempotent against repeated
 		// [DONE] but we don't need to spam it.
-		doneEvents := openairesponses.ConvertOpenAIChatCompletionsResponseToOpenAIResponses(ctx, modelName, originalRequestRawJSON, requestRawJSON, []byte("[DONE]"), &st.responseParam)
+		doneEvents := openairesponses.ConvertOpenAIChatCompletionsResponseToOpenAIResponses(ctx, modelName, sanitizedOriginalRequestRawJSON, sanitizedRequestRawJSON, []byte("[DONE]"), &st.responseParam)
 		out = append(out, doneEvents...)
 	}
 
@@ -156,5 +193,7 @@ func chunkHasFinishReason(chunk []byte) bool {
 func ConvertKiroNonStreamToOpenAIResponses(ctx context.Context, modelName string, originalRequestRawJSON, requestRawJSON, rawJSON []byte, param *any) []byte {
 	st := streamState(param)
 	chat := kiroopenai.ConvertKiroNonStreamToOpenAI(ctx, modelName, originalRequestRawJSON, requestRawJSON, rawJSON, &st.kiroParam)
-	return openairesponses.ConvertOpenAIChatCompletionsResponseToOpenAIResponsesNonStream(ctx, modelName, originalRequestRawJSON, requestRawJSON, chat, &st.responseParam)
+	sanitizedOriginalRequestRawJSON := sanitizeOriginalResponsesRequestForKiro(originalRequestRawJSON)
+	sanitizedRequestRawJSON := sanitizeOriginalResponsesRequestForKiro(requestRawJSON)
+	return openairesponses.ConvertOpenAIChatCompletionsResponseToOpenAIResponsesNonStream(ctx, modelName, sanitizedOriginalRequestRawJSON, sanitizedRequestRawJSON, chat, &st.responseParam)
 }

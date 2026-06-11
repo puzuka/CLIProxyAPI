@@ -31,7 +31,7 @@ func TestConvertGeminiRequestToAntigravity_ReplacesClientSignatureOnFunctionCall
 	}
 
 	sig := parts[0].Get("thoughtSignature").String()
-	expectedSig := "skip_thought_signature_validator"
+	expectedSig := "c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I="
 	if sig != expectedSig {
 		t.Errorf("Expected thoughtSignature '%s', got '%s'", expectedSig, sig)
 	}
@@ -55,7 +55,7 @@ func TestConvertGeminiRequestToAntigravity_ReplacesClientSignatureOnTextPart(t *
 	outputStr := string(output)
 
 	sig := gjson.Get(outputStr, "request.contents.0.parts.0.thoughtSignature").String()
-	expectedSig := "skip_thought_signature_validator"
+	expectedSig := "c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I="
 	if sig != expectedSig {
 		t.Errorf("Expected thoughtSignature '%s', got '%s'", expectedSig, sig)
 	}
@@ -78,7 +78,7 @@ func TestConvertGeminiRequestToAntigravity_AddsSkipSentinelToStringThoughtPart(t
 	outputStr := string(output)
 
 	sig := gjson.Get(outputStr, "request.contents.0.parts.0.thoughtSignature").String()
-	expectedSig := "skip_thought_signature_validator"
+	expectedSig := "c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I="
 	if sig != expectedSig {
 		t.Errorf("Expected thoughtSignature '%s', got '%s'", expectedSig, sig)
 	}
@@ -106,7 +106,7 @@ func TestConvertGeminiRequestToAntigravity_SkipsUppercaseClaudeModel(t *testing.
 }
 
 func TestConvertGeminiRequestToAntigravity_AddSkipSentinelToFunctionCall(t *testing.T) {
-	// functionCall without signature should get skip_thought_signature_validator
+	// functionCall without signature should get c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I=
 	inputJSON := []byte(`{
 		"model": "gemini-3-pro-preview",
 		"contents": [
@@ -122,16 +122,16 @@ func TestConvertGeminiRequestToAntigravity_AddSkipSentinelToFunctionCall(t *test
 	output := ConvertGeminiRequestToAntigravity("gemini-3-pro-preview", inputJSON, false)
 	outputStr := string(output)
 
-	// Check that skip_thought_signature_validator is added to functionCall
+	// Check that c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I= is added to functionCall
 	sig := gjson.Get(outputStr, "request.contents.0.parts.0.thoughtSignature").String()
-	expectedSig := "skip_thought_signature_validator"
+	expectedSig := "c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I="
 	if sig != expectedSig {
 		t.Errorf("Expected skip sentinel '%s', got '%s'", expectedSig, sig)
 	}
 }
 
 func TestConvertGeminiRequestToAntigravity_ParallelFunctionCalls(t *testing.T) {
-	// Multiple functionCalls should all get skip_thought_signature_validator
+	// Multiple functionCalls should all get c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I=
 	inputJSON := []byte(`{
 		"model": "gemini-3-pro-preview",
 		"contents": [
@@ -153,7 +153,7 @@ func TestConvertGeminiRequestToAntigravity_ParallelFunctionCalls(t *testing.T) {
 		t.Fatalf("Expected 2 parts, got %d", len(parts))
 	}
 
-	expectedSig := "skip_thought_signature_validator"
+	expectedSig := "c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I="
 	for i, part := range parts {
 		sig := part.Get("thoughtSignature").String()
 		if sig != expectedSig {

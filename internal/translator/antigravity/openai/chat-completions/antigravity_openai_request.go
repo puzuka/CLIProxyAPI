@@ -14,7 +14,7 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-const geminiCLIFunctionThoughtSignature = "skip_thought_signature_validator"
+const geminiCLIFunctionThoughtSignature = "c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I="
 
 func parseBase64DataURL(dataURL string) (mimeType string, data string, ok bool) {
 	trimmed, found := strings.CutPrefix(strings.TrimSpace(dataURL), "data:")

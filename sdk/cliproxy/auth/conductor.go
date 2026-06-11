@@ -2301,7 +2301,7 @@ func (m *Manager) MarkResult(ctx context.Context, result Result) {
 			}
 		} else {
 			if result.Model != "" {
-				if !isRequestScopedNotFoundResultError(result.Error) {
+				if !isRequestInvalidResultError(result.Error) {
 					disableCooling := quotaCooldownDisabledForAuth(auth)
 					state := ensureModelState(auth, result.Model)
 					state.Unavailable = true
@@ -2749,21 +2749,32 @@ func isRequestInvalidError(err error) bool {
 	if isModelSupportError(err) {
 		return false
 	}
-	status := statusCodeFromError(err)
+	return isRequestInvalidStatusMessage(statusCodeFromError(err), err.Error())
+}
+
+func isRequestInvalidResultError(err *Error) bool {
+	if err == nil {
+		return false
+	}
+	if isModelSupportResultError(err) {
+		return false
+	}
+	return isRequestInvalidStatusMessage(statusCodeFromResult(err), err.Message)
+}
+
+func isRequestInvalidStatusMessage(status int, message string) bool {
 	switch status {
 	case http.StatusBadRequest:
-		msg := err.Error()
-		return strings.Contains(msg, "invalid_request_error") ||
-			strings.Contains(msg, "INVALID_ARGUMENT") ||
-			strings.Contains(msg, "FAILED_PRECONDITION")
+		return strings.Contains(message, "invalid_request_error") ||
+			strings.Contains(message, "INVALID_ARGUMENT") ||
+			strings.Contains(message, "FAILED_PRECONDITION")
 	case http.StatusNotFound:
-		return isRequestScopedNotFoundMessage(err.Error())
+		return isRequestScopedNotFoundMessage(message)
 	case http.StatusUnprocessableEntity:
 		return true
 	case http.StatusInternalServerError:
-		msg := err.Error()
-		return strings.Contains(msg, "\"status\":\"UNKNOWN\"") ||
-			strings.Contains(msg, "\"status\": \"UNKNOWN\"")
+		return strings.Contains(message, "\"status\":\"UNKNOWN\"") ||
+			strings.Contains(message, "\"status\": \"UNKNOWN\"")
 	default:
 		return false
 	}
@@ -2773,7 +2784,7 @@ func applyAuthFailureState(auth *Auth, resultErr *Error, retryAfter *time.Durati
 	if auth == nil {
 		return
 	}
-	if isRequestScopedNotFoundResultError(resultErr) {
+	if isRequestInvalidResultError(resultErr) {
 		return
 	}
 	disableCooling := quotaCooldownDisabledForAuth(auth)

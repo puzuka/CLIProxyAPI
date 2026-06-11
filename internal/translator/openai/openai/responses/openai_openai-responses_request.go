@@ -197,18 +197,22 @@ func ConvertOpenAIResponsesRequestToOpenAIChatCompletions(modelName string, inpu
 			case "function_call":
 				// Buffer consecutive function calls and emit them as one assistant message.
 				toolCall := []byte(`{"id":"","type":"function","function":{"name":"","arguments":""}}`)
+				name := ""
 
 				if callId := item.Get("call_id"); callId.Exists() {
 					toolCall, _ = sjson.SetBytes(toolCall, "id", callId.String())
 				}
 
-				if name := item.Get("name"); name.Exists() {
-					toolCall, _ = sjson.SetBytes(toolCall, "function.name", name.String())
+				if nameValue := item.Get("name"); nameValue.Exists() {
+					name = nameValue.String()
+					toolCall, _ = sjson.SetBytes(toolCall, "function.name", name)
 				}
 
-				if arguments := item.Get("arguments"); arguments.Exists() {
-					toolCall, _ = sjson.SetBytes(toolCall, "function.arguments", arguments.String())
+				arguments := "{}"
+				if argumentsValue := item.Get("arguments"); argumentsValue.Exists() {
+					arguments, _ = normalizeFunctionCallArguments(name, argumentsValue.String())
 				}
+				toolCall, _ = sjson.SetBytes(toolCall, "function.arguments", arguments)
 				pendingToolCalls = append(pendingToolCalls, gjson.ParseBytes(toolCall).Value())
 				if callID := strings.TrimSpace(item.Get("call_id").String()); callID != "" {
 					pendingToolCallIDs = append(pendingToolCallIDs, callID)

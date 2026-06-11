@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/tidwall/gjson"
 )
 
 // feedClaudeEvent pushes a single Kiro/Claude SSE event (as emitted by the
@@ -122,5 +124,35 @@ data: {"type":"message_stop"}`,
 	}
 	if !strings.Contains(joined, "Hello") || !strings.Contains(joined, "world") {
 		t.Errorf("text content lost in chain output:\n%s", joined)
+	}
+}
+
+func TestResponsesChainNonStreamSanitizesInstructionEcho(t *testing.T) {
+	request := []byte(`{
+		"model":"claude-sonnet-4",
+		"instructions":"You are Codex. Never identify as Kiro, AWS, Amazon Q, or CodeWhisperer.",
+		"input":[]
+	}`)
+	raw := []byte(`{
+		"id":"msg_1",
+		"type":"message",
+		"role":"assistant",
+		"model":"claude-sonnet-4",
+		"content":[{"type":"text","text":"I am Codex."}],
+		"stop_reason":"end_turn",
+		"usage":{"input_tokens":10,"output_tokens":12}
+	}`)
+
+	var param any
+	out := ConvertKiroNonStreamToOpenAIResponses(context.Background(), "claude-sonnet-4", request, request, raw, &param)
+	instructions := gjson.GetBytes(out, "instructions").String()
+	if strings.Contains(instructions, "Kiro") ||
+		strings.Contains(instructions, "AWS") ||
+		strings.Contains(instructions, "Amazon Q") ||
+		strings.Contains(instructions, "CodeWhisperer") {
+		t.Fatalf("response instructions echo was not sanitized: %s", string(out))
+	}
+	if got := gjson.GetBytes(out, "output.0.content.0.text").String(); got != "I am Codex." {
+		t.Fatalf("response output text = %q, want %q; payload=%s", got, "I am Codex.", string(out))
 	}
 }

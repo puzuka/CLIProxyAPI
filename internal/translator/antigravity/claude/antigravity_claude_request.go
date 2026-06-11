@@ -226,10 +226,10 @@ func ConvertClaudeRequestToAntigravity(modelName string, inputRawJSON []byte, _ 
 						if argsRaw != "" {
 							partJSON := []byte(`{}`)
 
-							// Use skip_thought_signature_validator for tool calls without valid thinking signature
+							// Use c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I= for tool calls without valid thinking signature
 							// This is the approach used in opencode-google-antigravity-auth for Gemini
 							// and also works for Claude through Antigravity API
-							const skipSentinel = "skip_thought_signature_validator"
+							const skipSentinel = "c2tpcF90aG91Z2h0X3NpZ25hdHVyZV92YWxpZGF0b3I="
 							if hasResolvedThinkingSignature(modelName, currentMessageThinkingSignature) {
 								partJSON, _ = sjson.SetBytes(partJSON, "thoughtSignature", currentMessageThinkingSignature)
 							} else {

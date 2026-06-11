@@ -25,6 +25,7 @@ func ParseConfigBytes(data []byte) (*Config, error) {
 	cfg.UsageStatisticsEnabled = false
 	cfg.UsageStore.RollupsEnabled = true
 	cfg.UsageStore.ApplyDefaults()
+	cfg.Headroom.ApplyDefaults()
 	cfg.RedisUsageQueueRetentionSeconds = 60
 	cfg.DisableCooling = false
 	cfg.DisableImageGeneration = DisableImageGenerationOff

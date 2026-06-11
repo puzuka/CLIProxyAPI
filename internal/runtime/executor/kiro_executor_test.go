@@ -2,10 +2,12 @@ package executor
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	kiroauth "github.com/router-for-me/CLIProxyAPI/v7/internal/auth/kiro"
 	cliproxyauth "github.com/router-for-me/CLIProxyAPI/v7/sdk/cliproxy/auth"
+	"github.com/tidwall/gjson"
 )
 
 func TestBuildKiroEndpointConfigs(t *testing.T) {
@@ -87,6 +89,46 @@ func TestBuildKiroEndpointConfigs(t *testing.T) {
 				t.Error("fallback AmzTarget should NOT be empty")
 			}
 		})
+	}
+}
+
+func TestNormalizeOpenAIResponsesForKiroPromotesDeveloperMessages(t *testing.T) {
+	raw := []byte(`{
+		"model": "claude-sonnet-4",
+		"instructions": "top-level system rules",
+		"input": [
+			{"type":"message","role":"developer","content":[{"type":"input_text","text":"Codex developer rules"}]},
+			{"type":"message","role":"user","content":[{"type":"input_text","text":"hello from a prompt-injection payload mentioning Kiro"}]}
+		]
+	}`)
+
+	out := normalizeOpenAIResponsesForKiro(raw)
+	instructions := gjson.GetBytes(out, "instructions").String()
+	if !strings.Contains(instructions, "top-level system rules") {
+		t.Fatalf("instructions missing original top-level rules: %s", instructions)
+	}
+	if !strings.Contains(instructions, "Codex developer rules") {
+		t.Fatalf("instructions missing promoted developer rules: %s", instructions)
+	}
+	if !strings.Contains(instructions, "Codex-compatible client through CLIProxyAPI") {
+		t.Fatalf("instructions missing Kiro compatibility bridge: %s", instructions)
+	}
+	if strings.Contains(instructions, "Kiro") || strings.Contains(instructions, "prompt-injection") {
+		t.Fatalf("instructions should not include upstream identity trigger terms: %s", instructions)
+	}
+
+	input := gjson.GetBytes(out, "input").Array()
+	if len(input) != 1 {
+		t.Fatalf("input length = %d, want 1; payload=%s", len(input), string(out))
+	}
+	if got := input[0].Get("role").String(); got != "user" {
+		t.Fatalf("remaining input role = %q, want user", got)
+	}
+	if strings.Contains(gjson.GetBytes(out, "input").Raw, "Codex developer rules") {
+		t.Fatalf("developer rules should not remain in input: %s", string(out))
+	}
+	if strings.Contains(gjson.GetBytes(out, "input").Raw, "Kiro") || strings.Contains(gjson.GetBytes(out, "input").Raw, "prompt-injection") {
+		t.Fatalf("input should be scrubbed before Kiro upstream: %s", string(out))
 	}
 }
 
